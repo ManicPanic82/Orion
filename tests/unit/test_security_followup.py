@@ -550,3 +550,21 @@ def test_medium_risk_read_only_capability_requires_gateway() -> None:
     )
     assert result["success"] is False
     assert result["error_code"] == "permission_unavailable"
+
+
+
+def test_low_risk_read_only_resource_access_requires_gateway() -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="read_file",
+            idempotency=IdempotencyClass.READ_ONLY,
+            risk="low",
+            handler=lambda payload, cancel_event=None: {"read": True},
+        )
+    )
+    result = CapabilityExecutor(registry).execute(
+        TaskStep(capability_id="read_file", input={"path": "C:/Private/secret.txt"})
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "permission_unavailable"
