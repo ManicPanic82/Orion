@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -69,8 +70,32 @@ class AutomationExecutor:
             Path(root).resolve(strict=False) for root in (approved_roots or [])
         )
         self._permission_gateway = permission_gateway
-        self._allowed_executables = frozenset(allowed_executables or set())
+        configured_executables = frozenset(str(item) for item in (allowed_executables or set()))
+        self._allowed_executables = configured_executables
+        self._resolved_executables: dict[str, str] = {}
+        for configured in configured_executables:
+            resolved = self._resolve_executable(configured)
+            if resolved is not None:
+                self._resolved_executables[os.path.normcase(configured)] = resolved
         self._lock = threading.RLock()
+
+    def _resolve_executable(self, configured: str) -> str | None:
+        candidate = Path(configured)
+        try:
+            if candidate.is_absolute():
+                resolved = candidate.resolve(strict=True)
+            else:
+                located = shutil.which(configured)
+                if located is None:
+                    return None
+                resolved = Path(located).resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
+        if not resolved.is_file():
+            return None
+        if any(resolved.is_relative_to(root) for root in self._approved_roots):
+            return None
+        return str(resolved)
 
     @property
     def approved_roots(self) -> tuple[str, ...]:
@@ -84,11 +109,13 @@ class AutomationExecutor:
     def permission_gateway(self) -> Any:
         return self._permission_gateway
 
-    def validate_request(self, request: ExecutionRequest) -> Path | None:
+    def validate_request(self, request: ExecutionRequest) -> tuple[Path | None, str]:
         if not self._allowed_executables:
             raise ValueError("AutomationExecutor requires an allowed_executables allowlist")
-        if request.executable not in self._allowed_executables:
-            raise ValueError(f"executable not allowed: {request.executable}")
+        executable_key = os.path.normcase(request.executable)
+        resolved_executable = self._resolved_executables.get(executable_key)
+        if resolved_executable is None:
+            raise ValueError(f"executable is not allowlisted or could not be resolved: {request.executable}")
         protected_overrides = {
             key.upper() for key in (request.env or {}) if key.upper() in _PROTECTED_ENV_KEYS
         }
@@ -100,11 +127,11 @@ class AutomationExecutor:
         if not self._approved_roots:
             raise ValueError("AutomationExecutor requires approved_roots")
         if not request.working_dir:
-            return None
+            return None, resolved_executable
         resolved = Path(request.working_dir).resolve(strict=False)
         if not any(resolved.is_relative_to(root) for root in self._approved_roots):
             raise PathEscapeError(f"path {resolved} is outside approved roots")
-        return resolved
+        return resolved, resolved_executable
 
     def _permission_check(
         self, request: ExecutionRequest, working_dir: Path | None
@@ -131,7 +158,7 @@ class AutomationExecutor:
             )
 
     def execute(self, request: ExecutionRequest, *, cancel_event: Any = None) -> ExecutionResult:
-        working_dir = self.validate_request(request)
+        working_dir, executable = self.validate_request(request)
         if request.dry_run:
             return ExecutionResult(
                 request_id=request.request_id, exit_code=0, stdout="dry run", stderr=""
@@ -158,7 +185,7 @@ class AutomationExecutor:
 
         try:
             proc = subprocess.Popen(
-                [request.executable, *request.args],
+                [executable, *request.args],
                 cwd=str(working_dir) if working_dir is not None else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
