@@ -92,24 +92,20 @@ class LearningManager:
         passed: bool | None = None,
     ) -> EvaluationResult:
         metrics = dict(metrics or {})
-        if passed is None:
-            # Mandatory, evidence-based certification: an evaluation without
-            # an accuracy metric cannot pass on its own.
-            acc = metrics.get("accuracy")
-            if acc is None:
-                raise ValueError(
-                    "evaluation requires an accuracy metric or an explicit passed result"
-                )
-            passed = bool(acc >= 0.8)
-        if metrics.get("regression") is False:
-            # Regression checks: a known regression fails the candidate.
-            passed = False
+        # Metrics and pass/fail values supplied by callers are not proof of a
+        # held-out evaluation. Until a trusted evaluator is injected, fail
+        # closed and keep the candidate ineligible for promotion.
+        if passed is not None:
+            raise ValueError("caller-supplied pass/fail is not accepted as evaluation evidence")
+        if not metrics:
+            raise ValueError("evaluation requires recorded held-out metrics")
+        passed = False
         ev = EvaluationResult(
             candidate_profile_id=candidate_profile_id,
             baseline_profile_id=baseline_profile_id or "",
             metrics=metrics,
             passed=passed,
-            details="evaluation completed",
+            details="not certified: trusted held-out evaluator is not configured",
         )
         with self._lock:
             self._evaluations[ev.evaluation_id] = ev
