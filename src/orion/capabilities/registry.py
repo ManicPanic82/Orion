@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 from orion.capabilities.models import Capability
 
 
@@ -10,7 +12,7 @@ class CapabilityRegistry:
         self._capabilities: dict[str, Capability] = {}
 
     def register(self, capability: Capability) -> None:
-        self._capabilities[capability.capability_id] = capability
+        self._capabilities[capability.capability_id] = copy.deepcopy(capability)
 
     def unregister(self, capability_id: str) -> None:
         self._capabilities.pop(capability_id, None)
@@ -18,10 +20,10 @@ class CapabilityRegistry:
     def get(self, capability_id: str) -> Capability:
         if capability_id not in self._capabilities:
             raise KeyError(f"capability not found: {capability_id}")
-        return self._capabilities[capability_id]
+        return copy.deepcopy(self._capabilities[capability_id])
 
     def list(self) -> list[Capability]:
-        return list(self._capabilities.values())
+        return [copy.deepcopy(capability) for capability in self._capabilities.values()]
 
     def list_ids(self) -> list[str]:
         return list(self._capabilities.keys())
