@@ -116,7 +116,9 @@ class TaskStep:
             capability_version=data.get("capability_version", "1"),
             input=dict(data.get("input", {}) or {}),
             state=TaskStepState(data.get("state", TaskStepState.PENDING.value)),
-            idempotency=IdempotencyClass(data.get("idempotency", IdempotencyClass.NON_IDEMPOTENT.value)),
+            idempotency=IdempotencyClass(
+                data.get("idempotency", IdempotencyClass.NON_IDEMPOTENT.value)
+            ),
             permission_decision=data.get("permission_decision", "not_evaluated"),
             started_at=data.get("started_at"),
             ended_at=data.get("ended_at"),
