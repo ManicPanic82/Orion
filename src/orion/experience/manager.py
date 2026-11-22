@@ -17,10 +17,16 @@ from orion.experience.store import ExperienceStore
 
 
 def _scrub_mapping(mapping: dict, fields: list[str]) -> None:
-    """Replace the values of ``fields`` present in ``mapping`` with a marker."""
-    for key in mapping:
+    """Recursively scrub matching mapping keys, including nested action payloads."""
+    for key, value in list(mapping.items()):
         if key in fields:
             mapping[key] = "[REDACTED]"
+        elif isinstance(value, dict):
+            _scrub_mapping(value, fields)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _scrub_mapping(item, fields)
 
 
 class ExperienceRecorder:
@@ -231,9 +237,22 @@ class ExperienceRecorder:
         # dataset builder and any export must never see the original values.
         _scrub_mapping(exp.metadata, exp.redacted_fields)
         for action in exp.actions:
-            _scrub_mapping(action.input, exp.redacted_fields)
-            if "observed_result" in exp.redacted_fields or "actions" in exp.redacted_fields:
+            if "actions" in exp.redacted_fields:
+                action.input = {key: "[REDACTED]" for key in action.input}
                 action.observed_result = "[REDACTED]"
+            else:
+                _scrub_mapping(action.input, exp.redacted_fields)
+                if "observed_result" in exp.redacted_fields:
+                    action.observed_result = "[REDACTED]"
+        for feedback in exp.feedback:
+            if "feedback" in exp.redacted_fields:
+                feedback.content = "[REDACTED]"
+                feedback.author = "[REDACTED]"
+            else:
+                if "content" in exp.redacted_fields or "feedback.content" in exp.redacted_fields:
+                    feedback.content = "[REDACTED]"
+                if "author" in exp.redacted_fields or "feedback.author" in exp.redacted_fields:
+                    feedback.author = "[REDACTED]"
         exp.eligible_for_training = exp.quality_state is QualityState.APPROVED and not exp.excluded
         self._save(exp)
         return exp
