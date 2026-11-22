@@ -84,7 +84,8 @@ def test_mock_trainer_lifecycle() -> None:
 def test_candidate_evaluation_records_metrics() -> None:
     lm = LearningManager()
     ev = lm.evaluate_candidate("cand1", metrics={"accuracy": 0.9})
-    assert ev.passed is True
+    assert ev.passed is False
+    assert "trusted held-out evaluator" in ev.details
     assert ev.metrics["accuracy"] == 0.9
 
 
