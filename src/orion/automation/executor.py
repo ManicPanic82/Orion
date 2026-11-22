@@ -119,6 +119,14 @@ class AutomationExecutor:
         resolved_executable = self._resolved_executables.get(executable_key)
         if resolved_executable is None:
             raise ValueError(f"executable is not allowlisted or could not be resolved: {request.executable}")
+        try:
+            current_executable = Path(resolved_executable).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError("allowlisted executable is no longer available") from exc
+        if os.path.normcase(str(current_executable)) != os.path.normcase(resolved_executable):
+            raise ValueError("allowlisted executable target changed after configuration")
+        if not current_executable.is_file():
+            raise ValueError("allowlisted executable is no longer a file")
         protected_overrides = {
             key.upper()
             for key in (request.env or {})
