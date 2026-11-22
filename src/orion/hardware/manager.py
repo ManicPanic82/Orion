@@ -126,10 +126,15 @@ class HardwareManager:
             else:
                 continue
             if name:
+                vendor = _vendor_for_name(name)
+                # Prefer nvidia-smi's per-device rows for NVIDIA adapters;
+                # WMI cannot distinguish identical models reliably.
+                if vendor is Vendor.NVIDIA and nvidia_raw:
+                    continue
                 gpus.append(
                     GPUInfo(
                         name=name,
-                        vendor=_vendor_for_name(name),
+                        vendor=vendor,
                         memory_mb=max(memory_bytes, 0) // (1024 * 1024),
                         driver_version=driver,
                         device_id=device_id,
@@ -153,13 +158,16 @@ class HardwareManager:
                 memory_mb = int(memory_text)
             except ValueError:
                 memory_mb = 0
-            match = next((gpu for gpu in gpus if gpu.name == name), None)
-            if match is None:
-                match = GPUInfo(name=name, vendor=_vendor_for_name(name))
-                gpus.append(match)
-            match.memory_mb = max(memory_mb, 0)
-            match.driver_version = driver
-            match.device_id = device_id
+            gpus.append(
+                GPUInfo(
+                    name=name,
+                    vendor=Vendor.NVIDIA,
+                    memory_mb=max(memory_mb, 0),
+                    driver_version=driver,
+                    device_id=device_id,
+                )
+            )
+        gpus.sort(key=lambda gpu: (gpu.vendor is not Vendor.NVIDIA, gpu.name, gpu.device_id))
         inventory.gpus = gpus or [GPUInfo(name="unknown", vendor=Vendor.OTHER)]
         self._inventory = inventory
         return inventory
