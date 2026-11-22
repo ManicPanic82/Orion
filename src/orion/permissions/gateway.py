@@ -71,12 +71,18 @@ class PermissionGateway:
             return list(self._grants.values())
 
     def _find_grant(
-        self, capability_id: str, resource: str, *, action: str = "", scope: str = ""
+        self,
+        capability_id: str,
+        resource: str,
+        *,
+        action: str = "",
+        scope: str = "",
+        args: dict[str, Any] | None = None,
     ) -> PermissionGrant | None:
         now = datetime.now(UTC)
         for grant in self._grants.values():
             if grant.is_active(now) and grant.matches(
-                capability_id, resource, action=action, scope=scope
+                capability_id, resource, action=action, scope=scope, args=args
             ):
                 return grant
         return None
@@ -96,15 +102,15 @@ class PermissionGateway:
         An approval may be used only for the complete request it was issued
         for: same capability, resource, action, scope, and arguments.
         """
-        if approval.capability_id and approval.capability_id != capability_id:
-            return True
-        if approval.resource and approval.resource != resource:
-            return True
-        if approval.action and approval.action != action:
-            return True
-        if approval.scope and approval.scope != scope:
-            return True
-        return bool(approval.args_hash and approval.args_hash != args_hash)
+        # Every field is exact, including empty values and absent task IDs.
+        # An incomplete approval is not a wildcard.
+        return (
+            approval.capability_id != capability_id
+            or approval.resource != resource
+            or approval.action != action
+            or approval.scope != scope
+            or approval.args_hash != args_hash
+        )
 
     # -- approvals -------------------------------------------------------
 
@@ -271,7 +277,7 @@ class PermissionGateway:
             # Read-only capabilities are allowed by default.
             if idempotency == "read_only":
                 grant = self._find_grant(
-                    capability_id, resource, action=effective_action, scope=scope
+                    capability_id, resource, action=effective_action, scope=scope, args=args
                 )
                 decision = PolicyDecision(
                     PermissionDecision.ALLOW,
@@ -321,8 +327,10 @@ class PermissionGateway:
                         ap.capability_id == capability_id
                         and ap.resource == resource
                         and ap.action == effective_action
-                        and (not ap.scope or ap.scope == scope)
-                        and (ap.args_hash == args_hash or ap.args_hash == "")
+                        and ap.scope == scope
+                        and ap.args_hash == args_hash
+                        and ap.task_id == task_id
+                        and ap.step_id == step_id
                         and ap.status is ApprovalStatus.APPROVED
                         and not ap.is_expired()
                     ):
@@ -342,6 +350,8 @@ class PermissionGateway:
                         scope=scope,
                         args_hash=args_hash,
                     )
+                    and approval.task_id == task_id
+                    and approval.step_id == step_id
                 ):
                     # One-time consumption.
                     if approval.one_time:
