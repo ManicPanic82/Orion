@@ -129,7 +129,8 @@ class CoreSupervisor:
                     except TypeError as exc:
                         if stop_event is not None:
                             raise RuntimeError(
-                                "child must support poll() or wait(timeout=) for interruptible shutdown"
+                                "child must support poll() or wait(timeout=) "
+                                "for interruptible shutdown"
                             ) from exc
                         # Compatibility for simple synchronous test doubles.
                         exit_code = child.wait()
