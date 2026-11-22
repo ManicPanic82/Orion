@@ -281,15 +281,20 @@ def test_feedback_and_nested_action_data_are_redacted() -> None:
         metadata={"nested": {"token": "metadata-secret"}},
     )
     recorder.add_feedback(experience.experience_id, "feedback-secret")
-    recorder.redact(experience.experience_id, ["token", "feedback.content"])
+    recorder.redact(
+        experience.experience_id,
+        ["metadata.token", "actions.input.token", "feedback.content"],
+    )
 
     stored = recorder.get(experience.experience_id)
     assert stored is not None
     assert stored.metadata["nested"]["token"] == "[REDACTED]"
     assert stored.actions[0].input["nested"]["token"] == "[REDACTED]"
     assert stored.feedback[0].content == "[REDACTED]"
+    recorder.add_feedback(experience.experience_id, "later-feedback-secret")
+    assert recorder.get(experience.experience_id).feedback[-1].content == "[REDACTED]"
     exported = json.dumps(recorder.export(), sort_keys=True)
-    for secret in ("action-secret", "metadata-secret", "feedback-secret"):
+    for secret in ("action-secret", "metadata-secret", "feedback-secret", "later-feedback-secret"):
         assert secret not in exported
 
 
