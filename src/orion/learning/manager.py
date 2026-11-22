@@ -154,11 +154,28 @@ class LearningManager:
         # Mandatory, candidate-specific held-out evaluation before promotion.
         if evaluation is None:
             raise ValueError("promotion requires a held-out evaluation result")
-        if not evaluation.metrics:
-            raise ValueError("evaluation must record metrics")
+        with self._lock:
+            registered = self._evaluations.get(evaluation.evaluation_id)
+        if registered is None or registered is not evaluation:
+            raise ValueError("promotion requires an evaluation issued by this LearningManager")
+        metrics = evaluation.metrics
+        if (
+            metrics.get("held_out") is not True
+            or not isinstance(metrics.get("eval_dataset_checksum"), str)
+            or not metrics.get("eval_dataset_checksum", "").strip()
+        ):
+            raise ValueError("evaluation lacks held-out dataset provenance")
+        try:
+            evaluated_examples = int(metrics.get("eval_examples", 0))
+            accuracy = float(metrics.get("accuracy", -1))
+        except (TypeError, ValueError):
+            evaluated_examples = 0
+            accuracy = -1
+        if evaluated_examples <= 0 or not math.isfinite(accuracy) or not 0 <= accuracy <= 1:
+            raise ValueError("evaluation metrics are incomplete or invalid")
         if evaluation.candidate_profile_id != candidate_id:
             raise ValueError("evaluation does not belong to the candidate being promoted")
-        if not evaluation.passed:
+        if not evaluation.passed or accuracy < 0.8 or metrics.get("regression") is False:
             raise ValueError("candidate failed evaluation")
         record = PromotionRecord(
             candidate_profile_id=candidate_id,
