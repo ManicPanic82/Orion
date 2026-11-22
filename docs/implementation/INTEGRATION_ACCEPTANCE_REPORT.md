@@ -20,7 +20,7 @@ This pass addresses findings from the subsequent source audit:
 | Capability idempotency defaulted to read-only | Default is now `NON_IDEMPOTENT`; only application-registered read-only capabilities bypass the side-effect gateway |
 | Capability permission scopes were not enforced | Required scope is passed to the gateway; scoped read-only capabilities also require a matching grant/approval; unsupported multi-scope declarations fail closed |
 | Grant constraints were ignored | Supports exact `required_args` and list-valued `allowed_args`; unknown/malformed constraint keys deny the grant |
-| Wildcard resource prefix matched sibling paths | Wildcards now require a path-separator boundary |
+| Wildcard resource prefix matched sibling paths | Filesystem resources are canonicalised (including dot segments and resolvable symlinks), and wildcards require a path-separator boundary |
 | Approval IDs were not fully request-bound | Capability, action, resource, scope, argument hash, task ID and step ID must all match exactly; empty context is not a wildcard; unknown explicit approval IDs are denied |
 | Unknown planner idempotency became read-only | Unknown classifications become non-idempotent; registered capability metadata remains authoritative and planner classifications can only make recovery more conservative |
 | Supervisor blocked in child wait/backoff | Child wait is monitored on a worker thread; stop terminates and, if necessary, kills the child; restart backoff observes the stop event |
@@ -34,7 +34,7 @@ This pass addresses findings from the subsequent source audit:
 Regression tests were added for the findings above. **They have not been
 executed in this editing session.** GitHub file edits do not provide a Windows
 Python runtime, so no new pytest, Ruff, smoke-launch, or hardware validation
-result is claimed here. The earlier 281-pass/Ruff/smoke evidence below belongs
+result is claimed here. No GitHub status checks were reported for the follow-up head. The earlier 281-pass/Ruff/smoke evidence below belongs
 to the earlier repair snapshot and must not be treated as validation of this
 follow-up branch.
 
