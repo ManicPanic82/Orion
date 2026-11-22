@@ -199,7 +199,8 @@ repair pass. These changes are isolated on `security/follow-up-hardening`.
 |---|---|
 | Capability default was READ_ONLY | Capability and task-step defaults are now NON_IDEMPOTENT. The agent persists classification from the registered capability, never from planner output. |
 | Capability metadata could be mutated after registration | Registry stores and returns isolated metadata snapshots while retaining trusted handler callables. |
-| A capability could reference multiple resources | Executor recursively collects all resource-bearing arguments and requires authorization for every resource/scope pair. Medium/high/critical risk reads also require gateway authorization. |
+| A capability could reference multiple resources | Each capability must declare its resource fields (or an explicit global selector); undeclared resource-like inputs fail closed. Executor requires authorization for every resource/scope pair. Medium/high/critical risk reads also require gateway authorization. |
+| Resource grants could be escaped through path traversal or symlinks | Grant matching resolves filesystem paths and checks segment boundaries; lexical traversal and resolved symlink/junction escapes are rejected. |
 | Required capability scopes were not enforced | CapabilityExecutor passes the actual resource, action, task/step, and every declared scope to the shared gateway. Scoped read-only operations require an exact grant/approval. |
 | Grant constraints were ignored | Grant constraints now match exact dotted argument paths; malformed or unknown constraints fail closed. |
 | Empty grant selectors acted as wildcards | Capability, action, scope, and resource selectors are exact by default. Wildcards must be explicit. Resource matching normalizes traversal segments and uses path-segment boundaries. |
@@ -215,7 +216,7 @@ repair pass. These changes are isolated on `security/follow-up-hardening`.
 | Training accepted unregistered or caller-mutated datasets | LearningManager accepts only its own registered dataset snapshots with a non-empty training split. |
 | Hardware inventory omitted GPUs and misreported OS/VRAM | Inventory reports Windows OS details, all detected adapters, and NVIDIA VRAM/driver/device identity via nvidia-smi where available. Capped WMI adapter memory is not presented as reliable VRAM. |
 
-Twenty-three focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained four dataset/evaluation tests and `tests/unit/test_projects.py` gained one project-root snapshot test. Existing experience, permission, and automation tests were updated for snapshot and exact-grant semantics. In total, 28 additional regression tests are authored on this branch. The follow-up changes have not been
+Twenty-five focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained four dataset/evaluation tests and `tests/unit/test_projects.py` gained one project-root snapshot test. Existing experience, permission, and automation tests were updated for snapshot and exact-grant semantics. In total, 30 additional regression tests are authored on this branch. The follow-up changes have not been
 executed in the user's Windows environment from this audit session. The
 previous 281-passed/Ruff/smoke results apply to the earlier repair baseline,
 not this follow-up branch.
