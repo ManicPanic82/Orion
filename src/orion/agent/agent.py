@@ -84,6 +84,10 @@ class ResidentAgent:
 
     def run_task(self, task_id: str) -> Task:
         task = self.task_manager.get_task(task_id)
+        if not task.recovery_safe:
+            # Recovery quarantined an ambiguous in-flight side effect. Do not
+            # execute later steps until a user reconciles the task explicitly.
+            return task
         if task.state is TaskState.CREATED:
             task = self.task_manager.transition_task_state(task_id, TaskState.PLANNED)
         if task.state is TaskState.PLANNED:
