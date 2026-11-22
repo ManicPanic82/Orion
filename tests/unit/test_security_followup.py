@@ -64,6 +64,7 @@ def test_scoped_read_only_capability_requires_matching_grant() -> None:
             capability_id="read_secret",
             idempotency=IdempotencyClass.READ_ONLY,
             required_scopes=["secrets.read"],
+            resource_fields=["path"],
             handler=lambda payload, cancel_event=None: {"read": True},
         )
     )
@@ -500,6 +501,7 @@ def test_capability_executor_checks_every_resource_argument() -> None:
             capability_id="write_files",
             idempotency=IdempotencyClass.NON_IDEMPOTENT,
             required_scopes=["files.write"],
+            resource_fields=["source", "destination"],
             handler=lambda payload, cancel_event=None: {"written": True},
         )
     )
@@ -561,6 +563,7 @@ def test_low_risk_read_only_resource_access_requires_gateway() -> None:
             capability_id="read_file",
             idempotency=IdempotencyClass.READ_ONLY,
             risk="low",
+            resource_fields=["path"],
             handler=lambda payload, cancel_event=None: {"read": True},
         )
     )
