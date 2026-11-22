@@ -643,3 +643,34 @@ def test_supervisor_does_not_spawn_when_shutdown_is_already_requested() -> None:
     result = supervisor.supervise(lambda: spawned.append(object()), stop_event=stop)
     assert result == 0
     assert spawned == []
+
+
+
+def test_grant_cannot_be_redirected_by_symlink_created_after_approval(tmp_path) -> None:
+    trusted = tmp_path / "trusted"
+    outside = tmp_path / "outside"
+    future_root = trusted / "future"
+    trusted.mkdir()
+    outside.mkdir()
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            action="write",
+            resource=f"{future_root}/*",
+            scope="project",
+        )
+    )
+    try:
+        future_root.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlink creation is unavailable")
+
+    decision = gateway.decide(
+        "write_file",
+        str(future_root / "secret.txt"),
+        action="write",
+        scope="project",
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
