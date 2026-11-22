@@ -47,31 +47,46 @@ class AutomationExecutor:
         permission_gateway: Any = None,
         allowed_executables: set[str] | None = None,
     ) -> None:
-        # Mandatory restrictions: an executor without them is unusable.
-        self.approved_roots = list(approved_roots or [])
-        self.permission_gateway = permission_gateway
-        self.allowed_executables = set(allowed_executables or set())
+        # Mandatory restrictions are immutable after construction. Resolve
+        # roots once so a later symlink replacement cannot widen the workspace.
+        self._approved_roots = tuple(
+            Path(root).resolve(strict=False) for root in (approved_roots or [])
+        )
+        self._permission_gateway = permission_gateway
+        self._allowed_executables = frozenset(allowed_executables or set())
         self._lock = threading.RLock()
 
+    @property
+    def approved_roots(self) -> tuple[str, ...]:
+        return tuple(str(root) for root in self._approved_roots)
+
+    @property
+    def allowed_executables(self) -> frozenset[str]:
+        return self._allowed_executables
+
+    @property
+    def permission_gateway(self) -> Any:
+        return self._permission_gateway
+
     def validate_request(self, request: ExecutionRequest) -> None:
-        if not self.allowed_executables:
+        if not self._allowed_executables:
             raise ValueError("AutomationExecutor requires an allowed_executables allowlist")
-        if request.executable not in self.allowed_executables:
+        if request.executable not in self._allowed_executables:
             raise ValueError(f"executable not allowed: {request.executable}")
-        if not self.approved_roots:
+        if not self._approved_roots:
             raise ValueError("AutomationExecutor requires approved_roots")
         if request.working_dir:
-            ensure_within_roots(request.working_dir, self.approved_roots)
+            ensure_within_roots(request.working_dir, self._approved_roots)
 
     def _permission_check(self, request: ExecutionRequest) -> None:
         effective = classify_request(request)
         if effective is IdempotencyClass.READ_ONLY:
             # Deterministically allowlisted read-only command, no gateway needed.
             return
-        if self.permission_gateway is None:
+        if self._permission_gateway is None:
             # Fail closed for side-effecting commands.
             raise PermissionError("permission gateway unavailable")
-        decision = self.permission_gateway.decide(
+        decision = self._permission_gateway.decide(
             "automation.execute",
             request.working_dir or "",
             idempotency=effective.value,
