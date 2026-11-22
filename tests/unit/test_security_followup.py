@@ -255,7 +255,9 @@ def test_supervisor_terminates_running_child_on_shutdown() -> None:
     supervisor = CoreSupervisor(
         RestartPolicy(max_restarts=2, initial_delay_s=0, max_delay_s=0)
     )
-    thread = threading.Thread(target=lambda: result.append(supervisor.supervise(spawn, stop_event=stop)))
+    thread = threading.Thread(
+        target=lambda: result.append(supervisor.supervise(spawn, stop_event=stop))
+    )
     thread.start()
     assert started.wait(1)
     stop.set()
