@@ -2,9 +2,56 @@
 
 Orion — status of the security/integration repair cycle.
 
-- Reviewed branch: `phase-11-15-remaining` @ `8f427e7`.
-- Report written after the security and integration repair pass; see
-  "Repair evidence" for the exact commands and results.
+- Historical baseline reviewed: `phase-11-15-remaining` @ `8f427e7`.
+- Follow-up hardening: `security-followup-repairs` (2026-11-22).
+- The follow-up section below supersedes earlier claims where it explicitly
+  marks a control as newly hardened or still blocked.
+
+## Follow-up security hardening — 2026-11-22
+
+**Branch:** `security-followup-repairs`, created from
+`phase-11-15-remaining`. The source branch and `main` were not modified.
+No merge or force-push was performed.
+
+This pass addresses findings from the subsequent source audit:
+
+| Finding | Follow-up result |
+|---|---|
+| Capability idempotency defaulted to read-only | Default is now `NON_IDEMPOTENT`; only application-registered read-only capabilities bypass the side-effect gateway |
+| Capability permission scopes were not enforced | Required scope is passed to the gateway; scoped read-only capabilities also require a matching grant/approval; unsupported multi-scope declarations fail closed |
+| Grant constraints were ignored | Supports exact `required_args` and list-valued `allowed_args`; unknown/malformed constraint keys deny the grant |
+| Wildcard resource prefix matched sibling paths | Wildcards now require a path-separator boundary |
+| Approval IDs were not fully request-bound | Capability, action, resource, scope, argument hash, task ID and step ID must all match exactly; empty context is not a wildcard |
+| Unknown planner idempotency became read-only | Unknown classifications become non-idempotent; registered capability metadata remains authoritative and planner classifications can only make recovery more conservative |
+| Supervisor blocked in child wait/backoff | Child wait is monitored on a worker thread; stop terminates and, if necessary, kills the child; restart backoff observes the stop event |
+| Nested experience feedback escaped redaction | Nested mappings, action inputs/results and feedback content are scrubbed in stored data and exports |
+| Caller could certify a candidate with arbitrary metrics / `passed=True` | Caller-supplied pass/fail is rejected; absent a trusted held-out evaluator, evaluations remain uncertified and promotion is blocked |
+| Task request deduplication was lost after restart | Request-ID index is rebuilt from durable task history |
+| Hardware inventory reported Python version as OS and only one GPU | Inventory now queries Windows OS identity and enumerates all non-Microsoft display adapters with available memory, driver and device identifiers |
+
+### Follow-up validation status
+
+Regression tests were added for the findings above. **They have not been
+executed in this editing session.** GitHub file edits do not provide a Windows
+Python runtime, so no new pytest, Ruff, smoke-launch, or hardware validation
+result is claimed here. The earlier 281-pass/Ruff/smoke evidence below belongs
+to the earlier repair snapshot and must not be treated as validation of this
+follow-up branch.
+
+Run from PowerShell on the target Windows workstation:
+
+```powershell
+.\\.venv\\Scripts\\python.exe -m pytest
+.\\.venv\\Scripts\\python.exe -m ruff check .
+.\\.venv\\Scripts\\python.exe scripts\\smoke_launch.py --offscreen
+```
+
+The trusted held-out evaluator remains intentionally unimplemented. Candidate
+promotion is therefore fail-closed until an evaluator can independently load
+the candidate, run a fixed held-out benchmark against the active baseline, and
+record reproducible evidence. Hardware inventory collection is improved, but
+GPU VRAM values reported by WMI are advisory and require comparison with
+vendor tooling on the actual machine.
 
 ## Verdict
 
@@ -157,9 +204,9 @@ task engine, memory + experience capture, learning gate, shutdown/recovery).
 .\.venv\Scripts\python.exe scripts\smoke_launch.py   # executed; see validation log below
 ```
 
-Git facts:
-- Branch `main` untouched; branch `phase-11-15-remaining` at `8f427e7` preserved.
-- No pushes, no merges, no branch changes.
+Historical Git facts for the earlier repair pass (not the follow-up branch):
+- The earlier pass left `main` and `phase-11-15-remaining` untouched.
+- The current follow-up is isolated on `security-followup-repairs`; no merge or force-push was performed.
 
 ## Known limitations and unimplemented items
 
