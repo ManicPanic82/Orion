@@ -104,7 +104,17 @@ class Experience:
             "outcome": self.outcome.value,
             "created_at": self.created_at,
             "actions": [a.as_dict(redact=redact) for a in self.actions],
-            "feedback": [f.as_dict() for f in self.feedback],
+            "feedback": [
+                {
+                    **f.as_dict(),
+                    "content": (
+                        "[REDACTED]"
+                        if redact and ("content" in self.redacted_fields or "feedback" in self.redacted_fields)
+                        else f.content
+                    ),
+                }
+                for f in self.feedback
+            ],
             "privacy_state": self.privacy_state.value,
             "quality_state": self.quality_state.value,
             "eligible_for_training": self.eligible_for_training,
