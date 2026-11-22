@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from orion.experience import ExperienceRecorder, OutcomeClass, PrivacyState, QualityState
+from orion.experience import (
+    Experience,
+    ExperienceAction,
+    ExperienceRecorder,
+    OutcomeClass,
+    PrivacyState,
+    QualityState,
+)
 from orion.learning import LearningManager, build_dataset
 from orion.learning.models import EvaluationResult
 from orion.models import ModelProfile
@@ -273,3 +280,19 @@ def test_training_rejects_unregistered_or_mutated_dataset() -> None:
     registered.examples[0].input["objective"] = "tampered"
     with pytest.raises(ValueError, match="built and registered"):
         manager.submit_training(registered)
+
+
+
+def test_dataset_builder_honours_nested_legacy_redaction_paths() -> None:
+    legacy = Experience(
+        outcome=OutcomeClass.SUCCESS,
+        privacy_state=PrivacyState.APPROVED,
+        quality_state=QualityState.APPROVED,
+        redacted_fields=["metadata.request", "actions.capability_id"],
+        metadata={"request": "legacy-private-request"},
+        actions=[ExperienceAction(capability_id="legacy-private-capability")],
+    )
+    dataset = build_dataset([legacy])
+    blob = dataset.to_jsonl()
+    assert "legacy-private-request" not in blob
+    assert "legacy-private-capability" not in blob
