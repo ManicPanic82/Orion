@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ntpath
+import os
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -9,6 +12,20 @@ from typing import Any
 from uuid import uuid4
 
 POLICY_VERSION = "1.0"
+
+
+def _canonical_resource(value: str) -> str:
+    """Canonicalise filesystem-like resources before comparing grant scopes."""
+    if not value or "://" in value:
+        return value
+    is_windows_path = bool(re.match(r"^[A-Za-z]:[\\/]", value)) or value.startswith("\\\\")
+    if is_windows_path:
+        if os.name == "nt":
+            return os.path.normcase(os.path.realpath(value))
+        return ntpath.normcase(ntpath.normpath(value))
+    if value.startswith(("/", "./", "../")):
+        return os.path.normcase(os.path.realpath(value))
+    return value
 
 
 class AutonomyMode(StrEnum):
@@ -70,16 +87,15 @@ class PermissionGrant:
             return False
         if self.resource and self.resource not in ("*", ""):
             if self.resource.endswith("*"):
-                prefix = self.resource[:-1]
-                # A wildcard is a path-prefix grant, not a raw string-prefix
-                # grant. Prevent sibling names such as TrustedEvil matching
-                # an approved root named Trusted.
-                if not resource.startswith(prefix):
+                prefix = _canonical_resource(self.resource[:-1])
+                target = _canonical_resource(resource)
+                # Resolve dot segments and symlinks before applying a
+                # separator-aware containment check.
+                if not target.startswith(prefix):
                     return False
-                if prefix and not prefix.endswith(("/", "\\")):
-                    if len(resource) > len(prefix) and resource[len(prefix)] not in ("/", "\\"):
-                        return False
-            elif self.resource != resource:
+                if prefix and len(target) > len(prefix) and target[len(prefix)] not in ("/", "\\"):
+                    return False
+            elif _canonical_resource(self.resource) != _canonical_resource(resource):
                 return False
         if self.action and self.action != action:
             return False
