@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ntpath
+import os
 import posixpath
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -84,11 +86,21 @@ class PermissionGrant:
             return False
 
         def normalise_path(value: str) -> tuple[str, str]:
-            # Normalise lexical traversal and case on Windows paths before
-            # applying a segment-boundary check. POSIX paths remain case-sensitive.
-            if ntpath.splitdrive(value)[0] or "\\" in value:
+            # Resolve filesystem paths (including existing symlinks/junctions)
+            # before matching. Keep URI resources lexical, and retain Windows
+            # path semantics when inspecting Windows paths off-platform.
+            if "://" in value:
+                return posixpath.normpath(value), "/"
+            is_windows_path = bool(ntpath.splitdrive(value)[0]) or "\\" in value
+            if is_windows_path and os.name != "nt":
                 return ntpath.normcase(ntpath.normpath(value)), "\\"
-            return posixpath.normpath(value), "/"
+            try:
+                resolved = str(Path(value).resolve(strict=False))
+            except (OSError, RuntimeError):
+                resolved = value
+            if ntpath.splitdrive(resolved)[0] or "\\" in resolved:
+                return ntpath.normcase(ntpath.normpath(resolved)), "\\"
+            return posixpath.normpath(resolved), "/"
 
         granted = self.resource
         requested = resource
