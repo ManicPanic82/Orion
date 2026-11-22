@@ -37,3 +37,22 @@ def test_sqlite_repository_delete(tmp_path: Path) -> None:
     task = tm.create_task(tm.create_objective("obj"), title="t")
     repo.delete(task.task_id)
     assert tm.list_tasks() == []
+
+def test_request_id_deduplication_survives_restart(tmp_path: Path) -> None:
+    db = tmp_path / "tasks.db"
+    first_manager = TaskManager(repository=SQLiteTaskRepository(db))
+    original = first_manager.create_task(
+        first_manager.create_objective("original request"),
+        title="original",
+        request_id="client-request-42",
+    )
+
+    restarted_manager = TaskManager(repository=SQLiteTaskRepository(db))
+    duplicate = restarted_manager.create_task(
+        restarted_manager.create_objective("duplicate request"),
+        title="duplicate",
+        request_id="client-request-42",
+    )
+    assert duplicate.task_id == original.task_id
+    assert duplicate.title == "original"
+    assert len(restarted_manager.list_tasks()) == 1
