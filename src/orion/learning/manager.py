@@ -107,16 +107,23 @@ class LearningManager:
             raise ValueError("evaluation requires a finite accuracy metric between 0 and 1")
         if metrics.get("held_out") is not True:
             raise ValueError("evaluation must identify a held-out dataset")
-        if not isinstance(metrics.get("eval_dataset_checksum"), str) or not metrics[
-            "eval_dataset_checksum"
-        ].strip():
-            raise ValueError("evaluation requires the held-out dataset checksum")
+        dataset_id = metrics.get("dataset_id")
+        with self._lock:
+            dataset = self._datasets.get(dataset_id) if isinstance(dataset_id, str) else None
+        if dataset is None or not dataset.eval_ids:
+            raise ValueError("evaluation must reference a registered dataset with an eval split")
+        if metrics.get("eval_dataset_checksum") != dataset.checksum:
+            raise ValueError("evaluation dataset checksum does not match the registered dataset")
         try:
             evaluated_examples = int(metrics.get("eval_examples", 0))
         except (TypeError, ValueError):
             evaluated_examples = 0
-        if evaluated_examples <= 0:
-            raise ValueError("evaluation requires a positive held-out example count")
+        if evaluated_examples != len(dataset.eval_ids):
+            raise ValueError("evaluation example count does not match the held-out split")
+        if isinstance(accuracy, bool) or not isinstance(accuracy, (int, float)):
+            raise ValueError("evaluation accuracy must be numeric")
+        if not math.isfinite(accuracy) or not 0.0 <= accuracy <= 1.0:
+            raise ValueError("evaluation accuracy must be finite and between 0 and 1")
         passed = bool(accuracy >= 0.8)
         if metrics.get("regression") is False:
             # Regression checks: a known regression fails the candidate.
@@ -160,19 +167,29 @@ class LearningManager:
         if registered is None or registered != evaluation:
             raise ValueError("promotion requires an evaluation issued by this LearningManager")
         metrics = evaluation.metrics
+        dataset_id = metrics.get("dataset_id")
+        with self._lock:
+            dataset = self._datasets.get(dataset_id) if isinstance(dataset_id, str) else None
         if (
-            metrics.get("held_out") is not True
-            or not isinstance(metrics.get("eval_dataset_checksum"), str)
-            or not metrics.get("eval_dataset_checksum", "").strip()
+            dataset is None
+            or not dataset.eval_ids
+            or metrics.get("held_out") is not True
+            or metrics.get("eval_dataset_checksum") != dataset.checksum
         ):
-            raise ValueError("evaluation lacks held-out dataset provenance")
+            raise ValueError("evaluation lacks registered held-out dataset provenance")
         try:
             evaluated_examples = int(metrics.get("eval_examples", 0))
-            accuracy = float(metrics.get("accuracy", -1))
+            accuracy_value = metrics.get("accuracy", -1)
+            accuracy = float(accuracy_value)
         except (TypeError, ValueError):
             evaluated_examples = 0
             accuracy = -1
-        if evaluated_examples <= 0 or not math.isfinite(accuracy) or not 0 <= accuracy <= 1:
+        if (
+            isinstance(accuracy_value, bool)
+            or evaluated_examples != len(dataset.eval_ids)
+            or not math.isfinite(accuracy)
+            or not 0 <= accuracy <= 1
+        ):
             raise ValueError("evaluation metrics are incomplete or invalid")
         if evaluation.candidate_profile_id != candidate_id:
             raise ValueError("evaluation does not belong to the candidate being promoted")
