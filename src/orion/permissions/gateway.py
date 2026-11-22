@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -127,7 +128,9 @@ class PermissionGateway:
         persistent: bool = False,
         one_time: bool = True,
     ) -> ApprovalRequest:
-        args_hash = hashlib.sha256(repr(sorted((args or {}).items())).encode()).hexdigest()
+        args_hash = hashlib.sha256(
+                json.dumps(args or {}, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+            ).hexdigest()
         expires_at = None
         if ttl_seconds is not None:
             expires_at = (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat()
