@@ -14,7 +14,11 @@ def _executor_for(td: str, **kwargs: object) -> AutomationExecutor:
     """Executor with mandatory restrictions + an allowing gateway."""
     gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
     gateway.add_grant(
-        PermissionGrant(capability_id="automation.execute", action="automation.execute", resource="*")
+        PermissionGrant(
+            capability_id="automation.execute",
+            action="automation.execute",
+            resource="*",
+        )
     )
     return AutomationExecutor(
         approved_roots=[td],
