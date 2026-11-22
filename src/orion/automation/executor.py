@@ -112,7 +112,7 @@ class AutomationExecutor:
     def permission_gateway(self) -> Any:
         return self._permission_gateway
 
-    def validate_request(self, request: ExecutionRequest) -> tuple[Path | None, str]:
+    def validate_request(self, request: ExecutionRequest) -> tuple[Path, str]:
         if not self._allowed_executables:
             raise ValueError("AutomationExecutor requires an allowed_executables allowlist")
         executable_key = os.path.normcase(request.executable)
@@ -138,7 +138,7 @@ class AutomationExecutor:
         return resolved, resolved_executable
 
     def _permission_check(
-        self, request: ExecutionRequest, working_dir: Path | None
+        self, request: ExecutionRequest, working_dir: Path
     ) -> None:
         effective = classify_request(request)
         if effective is IdempotencyClass.READ_ONLY:
