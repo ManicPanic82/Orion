@@ -45,8 +45,12 @@ class Capability:
             self.risk = RiskLevel(self.risk)
         if not self.capability_id.strip():
             raise ValueError("capability_id must not be empty")
+        if not isinstance(self.required_scopes, list):
+            raise ValueError("required_scopes must be a list of strings")
         if any(not isinstance(scope, str) or not scope.strip() for scope in self.required_scopes):
             raise ValueError("required_scopes must contain non-empty strings")
+        if not isinstance(self.resource_fields, list):
+            raise ValueError("resource_fields must be a list of strings")
         if any(
             not isinstance(field_name, str) or not field_name.strip()
             for field_name in self.resource_fields
