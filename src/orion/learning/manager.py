@@ -40,18 +40,18 @@ class LearningManager:
     def build_dataset(self, experiences: list[Experience], **kwargs: Any) -> DatasetVersion:
         dataset = build_dataset(experiences, **kwargs)
         with self._lock:
-            self._datasets[dataset.dataset_id] = dataset
+            self._datasets[dataset.dataset_id] = copy.deepcopy(dataset)
         return dataset
 
     def get_dataset(self, dataset_id: str) -> DatasetVersion:
         with self._lock:
             if dataset_id not in self._datasets:
                 raise KeyError(f"dataset not found: {dataset_id}")
-            return self._datasets[dataset_id]
+            return copy.deepcopy(self._datasets[dataset_id])
 
     def list_datasets(self) -> list[DatasetVersion]:
         with self._lock:
-            return list(self._datasets.values())
+            return [copy.deepcopy(dataset) for dataset in self._datasets.values()]
 
     # -- training --------------------------------------------------------
 
