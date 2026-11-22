@@ -24,6 +24,7 @@ from orion.experience import (
 from orion.hardware import HardwareManager
 from orion.permissions.gateway import PermissionGateway
 from orion.permissions.models import (
+    ApprovalRequest,
     AutonomyMode,
     PermissionDecision,
     PermissionGrant,
@@ -568,3 +569,27 @@ def test_low_risk_read_only_resource_access_requires_gateway() -> None:
     )
     assert result["success"] is False
     assert result["error_code"] == "permission_unavailable"
+
+
+
+def test_malformed_permission_expiry_and_constraints_fail_closed() -> None:
+    grant = PermissionGrant(
+        capability_id="write_file",
+        action="write_file",
+        resource="/safe",
+        constraints=None,
+        expires_at="not-a-timestamp",
+    )
+    assert grant.is_active() is False
+    assert (
+        grant.matches(
+            "write_file",
+            "/safe",
+            action="write_file",
+            args={},
+        )
+        is False
+    )
+
+    approval = ApprovalRequest(expires_at="not-a-timestamp")
+    assert approval.is_expired() is True
