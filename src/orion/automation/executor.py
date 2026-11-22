@@ -16,6 +16,22 @@ from orion.automation.workspace import PathEscapeError, redact_text
 # This allowlist is the *only* way a request is classified as read-only without a
 # permission gateway. It is owned by this module, never by the model supplying
 # the request.
+_PROTECTED_ENV_KEYS = frozenset(
+    {
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES",
+    }
+)
+
+
 _DETERMINISTIC_READ_ONLY_COMMANDS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     (frozenset({"git.exe", "git"}), ("status",)),
     (frozenset({"git.exe", "git"}), ("log",)),
@@ -73,6 +89,14 @@ class AutomationExecutor:
             raise ValueError("AutomationExecutor requires an allowed_executables allowlist")
         if request.executable not in self._allowed_executables:
             raise ValueError(f"executable not allowed: {request.executable}")
+        protected_overrides = {
+            key.upper() for key in (request.env or {}) if key.upper() in _PROTECTED_ENV_KEYS
+        }
+        if protected_overrides:
+            raise ValueError(
+                "environment cannot override executable resolution or code-loading keys: "
+                + ", ".join(sorted(protected_overrides))
+            )
         if not self._approved_roots:
             raise ValueError("AutomationExecutor requires approved_roots")
         if not request.working_dir:
