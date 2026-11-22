@@ -297,7 +297,9 @@ class PermissionGateway:
                 return decision
 
             # Check grants.
-            grant = self._find_grant(capability_id, resource, action=effective_action, scope=scope)
+            grant = self._find_grant(
+                capability_id, resource, action=effective_action, scope=scope, args=args
+            )
             if grant is not None:
                 decision = PolicyDecision(
                     PermissionDecision.ALLOW,
