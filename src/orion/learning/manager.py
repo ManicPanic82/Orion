@@ -92,15 +92,26 @@ class LearningManager:
         passed: bool | None = None,
     ) -> EvaluationResult:
         metrics = dict(metrics or {})
-        if passed is None:
-            # Mandatory, evidence-based certification: an evaluation without
-            # an accuracy metric cannot pass on its own.
-            acc = metrics.get("accuracy")
-            if acc is None:
-                raise ValueError(
-                    "evaluation requires an accuracy metric or an explicit passed result"
-                )
-            passed = bool(acc >= 0.8)
+        if passed is not None:
+            raise ValueError(
+                "passed is evaluator output, not caller input; omit it and provide held-out metrics"
+            )
+        accuracy = metrics.get("accuracy")
+        if not isinstance(accuracy, (int, float)):
+            raise ValueError("evaluation requires a numeric accuracy metric")
+        if metrics.get("held_out") is not True:
+            raise ValueError("evaluation must identify a held-out dataset")
+        if not isinstance(metrics.get("eval_dataset_checksum"), str) or not metrics[
+            "eval_dataset_checksum"
+        ].strip():
+            raise ValueError("evaluation requires the held-out dataset checksum")
+        try:
+            evaluated_examples = int(metrics.get("eval_examples", 0))
+        except (TypeError, ValueError):
+            evaluated_examples = 0
+        if evaluated_examples <= 0:
+            raise ValueError("evaluation requires a positive held-out example count")
+        passed = bool(accuracy >= 0.8)
         if metrics.get("regression") is False:
             # Regression checks: a known regression fails the candidate.
             passed = False
