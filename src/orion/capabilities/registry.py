@@ -13,6 +13,7 @@ def _capability_snapshot(capability: Capability) -> Capability:
     snapshot.input_schema = copy.deepcopy(capability.input_schema)
     snapshot.output_schema = copy.deepcopy(capability.output_schema)
     snapshot.required_scopes = list(capability.required_scopes)
+    snapshot.resource_fields = list(capability.resource_fields)
     return snapshot
 
 
