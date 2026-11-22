@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-
-import pytest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+
+import pytest
 
 from orion.core.api import HOST, MAX_BODY_BYTES, OrionApiServer
 

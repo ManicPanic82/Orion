@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from orion.core.health import HealthStatus
 from orion.core.lifecycle import CoreLifecycleState
 from orion.core.service import OrionCore, OrionCoreStatus
-from orion.core.health import HealthStatus
 
 
 def test_core_starts_into_ready_state_and_serves_the_api() -> None:

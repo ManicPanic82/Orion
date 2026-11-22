@@ -1,0 +1,115 @@
+"""Tests for permission gateway and autonomy."""
+
+from __future__ import annotations
+
+import contextlib
+
+from orion.permissions import (
+    AutonomyMode,
+    PermissionDecision,
+    PermissionGateway,
+    PermissionGrant,
+)
+
+
+def test_missing_grant_denied_in_independent_mode() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec.decision is PermissionDecision.DENY
+    assert dec.rationale_code == "missing_grant"
+
+
+def test_side_effect_requires_approval_in_supervised() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec.decision is PermissionDecision.REQUIRE_APPROVAL
+
+
+def test_grant_allows() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec.decision is PermissionDecision.ALLOW
+    assert dec.rationale_code == "grant_matched"
+
+
+def test_expired_approval_rejected() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    ap = gw.request_approval(capability_id="write_file", resource="/tmp/x", ttl_seconds=-1)
+    # Force expired
+    ap.expires_at = "2000-01-01T00:00:00+00:00"
+    with contextlib.suppress(ValueError):
+        gw.approve(ap.approval_id)
+    dec = gw.decide(
+        "write_file", "/tmp/x", approval_id=ap.approval_id, idempotency="non_idempotent"
+    )
+    assert dec.decision is PermissionDecision.DENY
+
+
+def test_wrong_scope_approval_not_matched() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    ap = gw.request_approval(capability_id="write_file", resource="/tmp/x", ttl_seconds=300)
+    gw.approve(ap.approval_id)
+    dec = gw.decide("write_file", "/tmp/y", idempotency="non_idempotent")
+    assert dec.decision is PermissionDecision.REQUIRE_APPROVAL
+
+
+def test_emergency_pause_blocks() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    gw.pause()
+    dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec.decision is PermissionDecision.DENY
+    assert dec.rationale_code == "emergency_paused"
+
+
+def test_revocation_takes_effect() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    grant = gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    gw.revoke_grant(grant.grant_id)
+    dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec.decision is PermissionDecision.DENY
+
+
+def test_read_only_allowed() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.RESTRICTED)
+    dec = gw.decide("echo", "/tmp/x", idempotency="read_only")
+    assert dec.decision is PermissionDecision.ALLOW
+
+
+def test_gateway_outage_blocks_side_effect() -> None:
+    # Executor with no gateway
+    from orion.capabilities import CapabilityRegistry, register_mock_capabilities
+    from orion.capabilities.executor import CapabilityExecutor
+    from orion.tasks.models import TaskStep
+
+    reg = CapabilityRegistry()
+    register_mock_capabilities(reg)
+    executor = CapabilityExecutor(reg, permission_gateway=None)
+    step = TaskStep(capability_id="write_file", input={"path": "/tmp/x"})
+    result = executor.execute(step)
+    assert result["success"] is False
+    assert result["error_code"] == "permission_unavailable"
+
+
+def test_policy_version_present() -> None:
+    gw = PermissionGateway()
+    dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec.policy_version == "1.0"
+
+
+def test_approval_one_time_consumption() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    ap = gw.request_approval(capability_id="write_file", resource="/tmp/x", ttl_seconds=300)
+    gw.approve(ap.approval_id)
+    dec1 = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec1.decision is PermissionDecision.ALLOW
+    dec2 = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec2.decision is PermissionDecision.REQUIRE_APPROVAL
+
+
+def test_restricted_denies_side_effect() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.RESTRICTED)
+    dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
+    assert dec.decision is PermissionDecision.DENY
+    assert dec.rationale_code == "restricted_mode"

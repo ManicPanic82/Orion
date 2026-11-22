@@ -6,7 +6,7 @@ from orion.core.lifecycle import CoreLifecycleState
 
 __all__ = ["CoreSupervisor", "RestartPolicy"]
 
-_DEFAULT_MAX_RESTARTS = 3
+_DEFAULT_MAX_RESTARTS = 1
 _DEFAULT_INITIAL_DELAY_S = 1.0
 _DEFAULT_MAX_DELAY_S = 30.0
 

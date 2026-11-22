@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from orion.core.health import HealthCheck, HealthMonitor, HealthSnapshot, HealthStatus
+from orion.core.health import HealthCheck, HealthMonitor, HealthStatus
 from orion.core.lifecycle import CoreLifecycleState
 
 

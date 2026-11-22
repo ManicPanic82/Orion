@@ -8,8 +8,8 @@ This repository is the source of truth for Orion's product vision, architecture,
 
 ## Project status
 
-**Stage:** Phase 1 implemented (Operations Centre shell)  
-**Application implementation:** Phase 1 shell present; Phases 2–15 not started  
+**Stage:** Phase 15 implemented (Real hardware and performance validation)
+**Application implementation:** Phases 1–15 present; All targeted phases implemented
 **Platform target:** Windows 10/11 x64, with Windows 10 compatibility treated as an explicit constraint  
 **Desktop UI:** PySide6  
 **Persistent store:** SQLite, with migrations  
