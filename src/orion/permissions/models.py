@@ -76,8 +76,8 @@ class PermissionGrant:
                 # an approved root named Trusted.
                 if not resource.startswith(prefix):
                     return False
-                if prefix and not prefix.endswith(("/", "\\\\")):
-                    if len(resource) > len(prefix) and resource[len(prefix)] not in ("/", "\\\\"):
+                if prefix and not prefix.endswith(("/", "\\")):
+                    if len(resource) > len(prefix) and resource[len(prefix)] not in ("/", "\\"):
                         return False
             elif self.resource != resource:
                 return False
