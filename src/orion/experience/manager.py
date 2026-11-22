@@ -16,11 +16,25 @@ from orion.experience.models import (
 from orion.experience.store import ExperienceStore
 
 
+def _scrub_value(value: Any, fields: set[str]) -> Any:
+    """Recursively redact matching keys in nested dictionaries and lists."""
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if key in fields else _scrub_value(item, fields)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_scrub_value(item, fields) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub_value(item, fields) for item in value)
+    return value
+
+
 def _scrub_mapping(mapping: dict, fields: list[str]) -> None:
-    """Replace the values of ``fields`` present in ``mapping`` with a marker."""
-    for key in mapping:
-        if key in fields:
-            mapping[key] = "[REDACTED]"
+    """Scrub matching keys at every nesting level in-place."""
+    scrubbed = _scrub_value(mapping, set(fields))
+    mapping.clear()
+    mapping.update(scrubbed)
 
 
 class ExperienceRecorder:
@@ -232,8 +246,17 @@ class ExperienceRecorder:
         _scrub_mapping(exp.metadata, exp.redacted_fields)
         for action in exp.actions:
             _scrub_mapping(action.input, exp.redacted_fields)
+            action.observed_result = _scrub_value(action.observed_result, set(exp.redacted_fields))
             if "observed_result" in exp.redacted_fields or "actions" in exp.redacted_fields:
                 action.observed_result = "[REDACTED]"
+        # Feedback is a separate nested collection, not part of metadata.
+        # Scrub its content and any future nested values using the same schema.
+        if "feedback" in exp.redacted_fields:
+            exp.feedback = []
+        else:
+            for feedback in exp.feedback:
+                if "content" in exp.redacted_fields:
+                    feedback.content = "[REDACTED]"
         exp.eligible_for_training = exp.quality_state is QualityState.APPROVED and not exp.excluded
         self._save(exp)
         return exp
