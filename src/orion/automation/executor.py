@@ -155,12 +155,21 @@ class AutomationExecutor:
         if self._permission_gateway is None:
             # Fail closed for side-effecting commands.
             raise PermissionError("permission gateway unavailable")
+        # Arbitrary process arguments can target resources beyond cwd, so a
+        # workspace-scoped grant is insufficient. Non-read-only process
+        # execution requires an explicit global automation grant; the exact
+        # executable, arguments, and working directory remain approval-bound.
         decision = self._permission_gateway.decide(
             "automation.execute",
-            str(working_dir) if working_dir is not None else "",
+            "*",
             idempotency=effective.value,
             task_id=request.task_id,
-            args={"executable": request.executable, "args": request.args},
+            step_id=request.request_id,
+            args={
+                "executable": request.executable,
+                "args": list(request.args),
+                "working_dir": str(working_dir),
+            },
         )
         from orion.permissions.models import PermissionDecision
 
