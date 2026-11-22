@@ -319,3 +319,19 @@ def test_unknown_explicit_approval_id_is_denied() -> None:
     )
     assert result.decision is PermissionDecision.DENY
     assert result.rationale_code == "approval_invalid"
+
+def test_path_wildcard_rejects_traversal_outside_granted_root() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/workspace/Trusted*"))
+    escaped = gw.decide(
+        "write_file",
+        "/workspace/Trusted/../TrustedEvil/secret.txt",
+        idempotency="non_idempotent",
+    )
+    contained = gw.decide(
+        "write_file",
+        "/workspace/Trusted/subdir/file.txt",
+        idempotency="non_idempotent",
+    )
+    assert escaped.decision is PermissionDecision.DENY
+    assert contained.decision is PermissionDecision.ALLOW
