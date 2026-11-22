@@ -99,3 +99,32 @@ def test_side_effecting_capability_without_gateway_is_denied_by_default() -> Non
     assert result["success"] is False
     assert result["error_code"] == "permission_unavailable"
     assert called == []
+
+def test_read_only_capability_with_required_scope_needs_grant() -> None:
+    from orion.capabilities.models import Capability, IdempotencyClass
+    from orion.permissions import AutonomyMode, PermissionGateway, PermissionGrant
+
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="scoped_reader",
+            idempotency=IdempotencyClass.READ_ONLY,
+            required_scopes=["files.read"],
+            handler=lambda args, **kwargs: {"ok": True},
+        )
+    )
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    executor = CapabilityExecutor(registry, gateway)
+    step = type("Step", (), {"capability_id": "scoped_reader", "input": {}})()
+    denied = executor.execute(step)
+    assert denied["success"] is False
+
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="scoped_reader",
+            action="scoped_reader",
+            scope="files.read",
+        )
+    )
+    allowed = executor.execute(step)
+    assert allowed["success"] is True
