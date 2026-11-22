@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "orion-workstation"
+version = "0.1.0"
+description = "Orion Workstation: the desktop Operations Centre for the Orion local-first assistant."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "Orion Project" }]
+classifiers = [
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3.12",
+  "Private :: Do Not Upload",
+]
+dependencies = ["PySide6>=6.12,<6.13"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-qt>=4.5",
+  "ruff>=0.17",
+]
+
+[project.scripts]
+orion-workstation = "orion.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orion"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+qt_api = "pyside6"
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]

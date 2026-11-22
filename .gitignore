@@ -1,0 +1,29 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Local runtime state (never commit user data)
+settings.json
+*.corrupt-*.json
+logs/
+*.log
+diagnostics/
+
+# Generated evidence artifacts
+artifacts/
+
+# Editors and OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

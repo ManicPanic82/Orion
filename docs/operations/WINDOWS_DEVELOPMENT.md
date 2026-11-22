@@ -8,6 +8,19 @@ The initial target environment is Windows 10/11 x64. Confirm the actual supporte
 
 ## 2. Development environment
 
+**Confirmed Phase 1 environment** (Windows 11 x64, 2026-11-22):
+
+| Component | Version |
+|---|---|
+| Python | 3.12.10 (`py -3.12`) |
+| PySide6 | 6.12.0 |
+| pytest / pytest-qt | 9.2.0 / 4.5.0 |
+| ruff | 0.17.6 |
+
+The project requires `>=3.12,<3.13`. The upper bound is a deliberate Phase 1 policy
+statement: 3.12 is the version Orion has been tested on, and widening it later is a
+decision to be made deliberately rather than inherited by accident.
+
 The implementation agent must:
 1. Inspect installed Python versions.
 2. Choose and document one supported Python version.
@@ -26,7 +39,9 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Do not assume Python 3.12 until Phase 1 confirms the selected dependency compatibility. If the project chooses another version, update this guide and project metadata together.
+Do not assume Python 3.12 without checking: it is now confirmed for Phase 1 (see the
+table above). If a later phase changes the supported version, update this guide and
+`pyproject.toml` together.
 
 ## 3. Configuration and paths
 

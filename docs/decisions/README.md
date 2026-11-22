@@ -21,6 +21,8 @@ Architecture Decision Records (ADRs) capture decisions that materially affect sy
 | [ADR-006](ADR-006-mock-first.md) | Mock-first integration strategy | Accepted |
 | [ADR-007](ADR-007-sqlite-persistence.md) | SQLite as initial authoritative store | Accepted |
 | [ADR-008](ADR-008-windows-first.md) | Windows-first development | Accepted |
+| [ADR-009](ADR-009-tray-residency.md) | Tray residency; window close hides, tray owns quit | Accepted |
+| [ADR-010](ADR-010-login-autostart.md) | Per-user login autostart with explicit consent | Accepted |
 
 ## Adding an ADR
 

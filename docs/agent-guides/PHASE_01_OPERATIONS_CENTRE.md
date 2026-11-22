@@ -17,6 +17,8 @@ Read root AGENTS.md, VISION.md, ARCHITECTURE.md, ROADMAP.md, and WINDOWS_DEVELOP
 - Configuration persistence for UI preferences.
 - Mock state provider with explicit MOCK labels.
 - Unit and Qt-level tests appropriate to the chosen test setup.
+- Tray residency and explicit quit (added by ADR-009).
+- Login autostart with explicit consent (added by ADR-010).
 
 ## Implementation instructions
 1. Inspect repository and choose a supported Python version compatible with Windows and PySide6. Record the decision.
@@ -27,7 +29,12 @@ Read root AGENTS.md, VISION.md, ARCHITECTURE.md, ROADMAP.md, and WINDOWS_DEVELOP
 6. The command composer may submit to a local mock handler only. It must say the response is simulated.
 7. Keep the console bounded, filterable where practical, and redact sensitive values.
 8. Persist only UI settings in this phase. Do not create speculative domain tables.
-9. Ensure the application exits cleanly and does not spawn an unmanaged background process.
+9. The application must never leave an unreachable process. Closing the window hides
+   it to the notification area (ADR-009); quitting is an explicit tray action, or
+   `Ctrl+Q` while the window is open; without a tray the window closes and the process
+   exits. Enforce a single instance so a second launch raises the existing window.
+10. Register login autostart only with explicit consent, read the registry back to
+    report the real state, and delete only the value Orion itself wrote (ADR-010).
 
 ## Forbidden shortcuts
 - No real model inference, shell execution, filesystem agent, voice, learning, or network calls.
@@ -43,6 +50,16 @@ Read root AGENTS.md, VISION.md, ARCHITECTURE.md, ROADMAP.md, and WINDOWS_DEVELOP
 - Settings persist after restart.
 - Mock status is visible and unmistakable.
 - Unit/Qt tests pass.
+- Closing the window hides it while the process survives; the tray Quit action exits.
+- A second launch raises the existing window instead of opening a duplicate.
+- Login autostart is registered only after explicit consent, and disabling it leaves
+  no registry residue.
+- `--minimised` starts with no visible window when a tray is available.
+
+## Implementation status
+
+Implemented on branch `phase-1-operations-centre`. See
+`docs/implementation/PHASE_01_HANDOFF.md` for evidence and known limitations.
 
 ## Handoff
 Report Python version, dependencies, startup command, files, screenshots if available, exact test results, and known UI limitations.

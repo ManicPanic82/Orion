@@ -8,8 +8,8 @@ This repository is the source of truth for Orion's product vision, architecture,
 
 ## Project status
 
-**Stage:** Architecture and planning  
-**Application implementation:** Not yet started  
+**Stage:** Phase 1 implemented (Operations Centre shell)  
+**Application implementation:** Phase 1 shell present; Phases 2–15 not started  
 **Platform target:** Windows 10/11 x64, with Windows 10 compatibility treated as an explicit constraint  
 **Desktop UI:** PySide6  
 **Persistent store:** SQLite, with migrations  
@@ -29,6 +29,39 @@ Read these documents in order before changing the architecture or implementing a
 4. [Implementation roadmap](docs/implementation/ROADMAP.md) — phases, dependencies, and exit criteria.
 5. [Architecture decisions](docs/decisions/README.md) — decisions and their rationale.
 6. [Subsystem guides](docs/agent-guides/README.md) — implementation instructions for individual components.
+
+## Running Orion Workstation (Phase 1)
+
+Verified on Windows 11 x64 with Python 3.12.10 and PySide6 6.12.0.
+
+```powershell
+Set-Location <OrionRepository>
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m orion
+```
+
+Lifecycle behaviour:
+
+- Closing the window minimises Orion to the notification area; the process keeps running (ADR-009).
+- Quit from the tray menu, or press `Ctrl+Q` while the window is open.
+- Launching Orion again raises the existing window instead of opening a duplicate, so a
+  hidden window is always recoverable.
+- `--minimised` starts with no visible window; this is what the login entry uses.
+- Login autostart is offered once, with *Yes* pre-selected, and can be changed in Settings (ADR-010).
+
+Checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe scripts\smoke_launch.py
+```
+
+Mutable state lives in `%APPDATA%\Orion\settings.json` (versioned JSON). Phase 1 has
+no model runtime, agent, task engine, automation, voice, learning, or network access.
+Every piece of assistant state is labelled `MOCK`.
 
 ## Repository map
 
