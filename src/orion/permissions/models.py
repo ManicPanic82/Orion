@@ -58,20 +58,53 @@ class PermissionGrant:
             return False
 
     def matches(
-        self, capability_id: str, resource: str, *, action: str = "", scope: str = ""
+        self,
+        capability_id: str,
+        resource: str,
+        *,
+        action: str = "",
+        scope: str = "",
+        args: dict[str, Any] | None = None,
     ) -> bool:
         if self.capability_id and self.capability_id != capability_id:
             return False
         if self.resource and self.resource not in ("*", ""):
             if self.resource.endswith("*"):
-                if not resource.startswith(self.resource[:-1]):
+                prefix = self.resource[:-1]
+                # A wildcard is a path-prefix grant, not a raw string-prefix
+                # grant. Prevent sibling names such as TrustedEvil matching
+                # an approved root named Trusted.
+                if not resource.startswith(prefix):
                     return False
+                if prefix and not prefix.endswith(("/", "\\\\")):
+                    if len(resource) > len(prefix) and resource[len(prefix)] not in ("/", "\\\\"):
+                        return False
             elif self.resource != resource:
                 return False
-        # Grants store action and scope; enforce both when set.
         if self.action and self.action != action:
             return False
-        return not (self.scope and self.scope != scope)
+        if self.scope and self.scope != scope:
+            return False
+
+        # Constraints intentionally support a small, explicit schema.
+        # Unknown keys or malformed values fail closed rather than silently
+        # weakening a grant.
+        constraints = self.constraints or {}
+        if not isinstance(constraints, dict):
+            return False
+        if set(constraints) - {"required_args", "allowed_args"}:
+            return False
+        request_args = args or {}
+        required = constraints.get("required_args", {})
+        allowed = constraints.get("allowed_args", {})
+        if not isinstance(required, dict) or not isinstance(allowed, dict):
+            return False
+        if any(key not in request_args or request_args[key] != value for key, value in required.items()):
+            return False
+        for key, values in allowed.items():
+            if not isinstance(values, list) or key not in request_args or request_args[key] not in values:
+                return False
+        return True
 
     def as_dict(self) -> dict[str, Any]:
         return {
