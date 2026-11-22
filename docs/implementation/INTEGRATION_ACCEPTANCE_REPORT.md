@@ -211,9 +211,11 @@ repair pass. These changes are isolated on `security/follow-up-hardening`.
 | Nested feedback/action content escaped redaction | Redaction recursively scrubs nested mappings and covers feedback content/author and action payloads. Experience records are isolated snapshots, serialization re-applies redaction, and later feedback remains scrubbed even if review state changes. |
 | Caller could forge a passing evaluation object | Caller-supplied pass/fail is rejected. Evaluations require a registered dataset, non-empty held-out split, matching checksum and exact held-out example count. Evaluation and dataset records are isolated from caller mutation; promotion accepts only a matching manager-issued evaluation. |
 | Task request IDs were not restored after restart | TaskManager rebuilds its request deduplication index from the durable repository. |
+| Project records could be mutated after root validation | ProjectManager stores and returns snapshots and revalidates the canonical project root before inspection or test execution. |
+| Training accepted unregistered or caller-mutated datasets | LearningManager accepts only its own registered dataset snapshots with a non-empty training split. |
 | Hardware inventory omitted GPUs and misreported OS/VRAM | Inventory reports Windows OS details, all detected adapters, and NVIDIA VRAM/driver/device identity via nvidia-smi where available. Capped WMI adapter memory is not presented as reliable VRAM. |
 
-Twenty-two focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained two additional evaluation-provenance tests, and existing experience/permission/automation tests were updated for snapshot and exact-grant semantics. The follow-up changes have not been
+Twenty-three focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained four dataset/evaluation tests and `tests/unit/test_projects.py` gained one project-root snapshot test. Existing experience, permission, and automation tests were updated for snapshot and exact-grant semantics. In total, 28 additional regression tests are authored on this branch. The follow-up changes have not been
 executed in the user's Windows environment from this audit session. The
 previous 281-passed/Ruff/smoke results apply to the earlier repair baseline,
 not this follow-up branch.
