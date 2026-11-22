@@ -142,3 +142,21 @@ def test_capture_failure_non_fatal() -> None:
     )
     assert result is None
     assert recorder.last_error is not None
+
+def test_redaction_scrubs_nested_feedback_and_export() -> None:
+    recorder = ExperienceRecorder()
+    exp = recorder.capture_experience(
+        objective_id="o",
+        task_id="t",
+        outcome=OutcomeClass.SUCCESS,
+        metadata={"nested": {"token": "nested-secret"}},
+    )
+    recorder.add_feedback(exp.experience_id, "feedback-secret")
+    recorder.redact(exp.experience_id, ["token", "content"])
+    stored = recorder.get(exp.experience_id)
+    assert stored is not None
+    assert stored.metadata["nested"]["token"] == "[REDACTED]"
+    assert stored.feedback[0].content == "[REDACTED]"
+    exported = recorder.export(redact=True)[0]
+    assert exported["feedback"][0]["content"] == "[REDACTED]"
+    assert "feedback-secret" not in str(exported)
