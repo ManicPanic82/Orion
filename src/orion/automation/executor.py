@@ -131,9 +131,8 @@ class AutomationExecutor:
             )
         if not self._approved_roots:
             raise ValueError("AutomationExecutor requires approved_roots")
-        if not request.working_dir:
-            return None, resolved_executable
-        resolved = Path(request.working_dir).resolve(strict=False)
+        requested_root = request.working_dir or str(self._approved_roots[0])
+        resolved = Path(requested_root).resolve(strict=False)
         if not any(resolved.is_relative_to(root) for root in self._approved_roots):
             raise PathEscapeError(f"path {resolved} is outside approved roots")
         return resolved, resolved_executable
