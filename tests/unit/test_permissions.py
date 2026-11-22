@@ -202,3 +202,88 @@ def test_grant_enforces_scope_constraint() -> None:
     assert dec_ok.decision is PermissionDecision.ALLOW
     dec_bad = gw.decide("write_file", "/tmp/x", scope="project", idempotency="non_idempotent")
     assert dec_bad.decision is PermissionDecision.DENY
+
+def test_grant_constraints_require_exact_arguments() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gw.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            resource="/workspace/*",
+            constraints={"required_args": {"mode": "safe"}, "allowed_args": {"format": ["txt", "md"]}},
+        )
+    )
+    allowed = gw.decide(
+        "write_file",
+        "/workspace/a.txt",
+        args={"mode": "safe", "format": "txt"},
+        idempotency="non_idempotent",
+    )
+    denied = gw.decide(
+        "write_file",
+        "/workspace/a.txt",
+        args={"mode": "unsafe", "format": "txt"},
+        idempotency="non_idempotent",
+    )
+    assert allowed.decision is PermissionDecision.ALLOW
+    assert denied.decision is PermissionDecision.DENY
+
+
+def test_unknown_grant_constraint_fails_closed() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gw.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            resource="/workspace/a.txt",
+            constraints={"allow_anything": True},
+        )
+    )
+    result = gw.decide("write_file", "/workspace/a.txt", idempotency="non_idempotent")
+    assert result.decision is PermissionDecision.DENY
+
+
+def test_path_wildcard_does_not_match_sibling_prefix() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gw.add_grant(
+        PermissionGrant(capability_id="write_file", resource=r"C:\\Projects\\Trusted*")
+    )
+    allowed = gw.decide(
+        "write_file", r"C:\\Projects\\Trusted\\file.txt", idempotency="non_idempotent"
+    )
+    denied = gw.decide(
+        "write_file", r"C:\\Projects\\TrustedEvil\\file.txt", idempotency="non_idempotent"
+    )
+    assert allowed.decision is PermissionDecision.ALLOW
+    assert denied.decision is PermissionDecision.DENY
+
+
+def test_approval_is_bound_to_task_and_step() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    approval = gw.request_approval(
+        capability_id="write_file",
+        resource="/workspace/a.txt",
+        task_id="task-1",
+        step_id="step-1",
+        args={"path": "/workspace/a.txt"},
+    )
+    gw.approve(approval.approval_id)
+    wrong_task = gw.decide(
+        "write_file", "/workspace/a.txt",
+        task_id="task-2", step_id="step-1",
+        args={"path": "/workspace/a.txt"},
+        approval_id=approval.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert wrong_task.decision is PermissionDecision.DENY
+
+
+def test_approval_with_empty_context_is_not_a_wildcard() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    approval = gw.request_approval(capability_id="write_file", resource="/workspace/a.txt")
+    gw.approve(approval.approval_id)
+    result = gw.decide(
+        "write_file", "/workspace/a.txt",
+        task_id="task-1", step_id="step-1",
+        approval_id=approval.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert result.decision is PermissionDecision.DENY
