@@ -308,3 +308,14 @@ def test_approval_is_bound_to_exact_step() -> None:
         idempotency="non_idempotent",
     )
     assert wrong_step.decision is PermissionDecision.DENY
+
+def test_unknown_explicit_approval_id_is_denied() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    result = gw.decide(
+        "write_file",
+        "/workspace/a.txt",
+        approval_id="missing-approval",
+        idempotency="non_idempotent",
+    )
+    assert result.decision is PermissionDecision.DENY
+    assert result.rationale_code == "approval_invalid"
