@@ -156,6 +156,7 @@ class HardwareManager:
             match.memory_mb = max(memory_mb, 0)
             match.driver_version = driver
             match.device_id = device_id
+        inventory.gpus = gpus or [GPUInfo(name="unknown", vendor=Vendor.OTHER)]
         self._inventory = inventory
         return inventory
 
