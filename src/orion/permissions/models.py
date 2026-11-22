@@ -15,6 +15,39 @@ from uuid import uuid4
 POLICY_VERSION = "1.0"
 
 
+def _normalise_resource_path(value: str, *, resolve: bool = True) -> tuple[str, str]:
+    if "://" in value:
+        return posixpath.normpath(value), "/"
+    is_windows_path = bool(ntpath.splitdrive(value)[0]) or "\\" in value
+    if is_windows_path and os.name != "nt":
+        return ntpath.normcase(ntpath.normpath(value)), "\\"
+    if resolve:
+        try:
+            value = str(Path(value).resolve(strict=False))
+        except (OSError, RuntimeError):
+            pass
+    if ntpath.splitdrive(value)[0] or "\\" in value:
+        return ntpath.normcase(ntpath.normpath(value)), "\\"
+    return posixpath.normpath(value), "/"
+
+
+def canonicalize_resource(value: str) -> str:
+    """Pin a grant/approval resource to its canonical path at creation time."""
+    if value == "*":
+        return value
+    wildcard = value.endswith("*")
+    root = value[:-1].rstrip("/\\") if wildcard else value
+    if wildcard and not root:
+        return "/*"
+    drive, tail = ntpath.splitdrive(root)
+    if wildcard and drive and not tail:
+        root = drive + "\\"
+    normalised, separator = _normalise_resource_path(root)
+    if wildcard:
+        return normalised.rstrip("/\\") + separator + "*"
+    return normalised
+
+
 class AutonomyMode(StrEnum):
     ASSIST = "assist"
     SUPERVISED = "supervised"
@@ -49,6 +82,7 @@ class PermissionGrant:
     revoked: bool = False
     constraints: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    resource_is_canonical: bool = False
 
     def is_active(self, now: datetime | None = None) -> bool:
         if self.revoked:
@@ -85,31 +119,16 @@ class PermissionGrant:
         if self.scope not in ("*", scope):
             return False
 
-        def normalise_path(value: str) -> tuple[str, str]:
-            # Resolve filesystem paths (including existing symlinks/junctions)
-            # before matching. Keep URI resources lexical, and retain Windows
-            # path semantics when inspecting Windows paths off-platform.
-            if "://" in value:
-                return posixpath.normpath(value), "/"
-            is_windows_path = bool(ntpath.splitdrive(value)[0]) or "\\" in value
-            if is_windows_path and os.name != "nt":
-                return ntpath.normcase(ntpath.normpath(value)), "\\"
-            try:
-                resolved = str(Path(value).resolve(strict=False))
-            except (OSError, RuntimeError):
-                resolved = value
-            if ntpath.splitdrive(resolved)[0] or "\\" in resolved:
-                return ntpath.normcase(ntpath.normpath(resolved)), "\\"
-            return posixpath.normpath(resolved), "/"
-
         granted = self.resource
         requested = resource
         if granted != "*":
             wildcard = granted.endswith("*")
             if wildcard:
                 granted = granted[:-1].rstrip("/\\")
-            normalised_grant, separator = normalise_path(granted)
-            normalised_request, _ = normalise_path(requested)
+            normalised_grant, separator = _normalise_resource_path(
+                granted, resolve=not self.resource_is_canonical
+            )
+            normalised_request, _ = _normalise_resource_path(requested)
             if wildcard:
                 if (
                     normalised_request != normalised_grant
@@ -140,6 +159,7 @@ class PermissionGrant:
             "capability_id": self.capability_id,
             "action": self.action,
             "resource": self.resource,
+            "resource_is_canonical": self.resource_is_canonical,
             "scope": self.scope,
             "persistent": self.persistent,
             "expires_at": self.expires_at,
