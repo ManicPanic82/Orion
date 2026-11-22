@@ -12,6 +12,13 @@ from orion.models import ModelProfile
 
 def _held_out_metrics(manager: LearningManager, accuracy: float, **extra):
     recorder, _ = _eligible_experience()
+    second = recorder.capture_experience(
+        objective_id="second-objective",
+        task_id="second-task",
+        outcome=OutcomeClass.SUCCESS,
+    )
+    recorder.review_privacy(second.experience_id, PrivacyState.APPROVED)
+    recorder.review_quality(second.experience_id, QualityState.APPROVED)
     dataset = manager.build_dataset(recorder.list_experiences())
     return {
         "accuracy": accuracy,
