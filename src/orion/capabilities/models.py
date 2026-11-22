@@ -37,6 +37,16 @@ class Capability:
     handler: Callable[..., Any] | None = None
     available: bool = True
 
+    def __post_init__(self) -> None:
+        if isinstance(self.idempotency, str):
+            self.idempotency = IdempotencyClass(self.idempotency)
+        if isinstance(self.risk, str):
+            self.risk = RiskLevel(self.risk)
+        if not self.capability_id.strip():
+            raise ValueError("capability_id must not be empty")
+        if any(not isinstance(scope, str) or not scope.strip() for scope in self.required_scopes):
+            raise ValueError("required_scopes must contain non-empty strings")
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "capability_id": self.capability_id,
