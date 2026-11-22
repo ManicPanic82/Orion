@@ -85,3 +85,25 @@ def test_report_saved() -> None:
         p = Path(td) / "report.json"
         mgr.save_benchmark_report(str(p))
         assert p.exists()
+
+def test_inventory_collects_all_gpus_os_and_memory(monkeypatch) -> None:
+    def query(self: HardwareManager, script: str, timeout: float = 15.0) -> str:
+        if "Win32_OperatingSystem" in script:
+            return '{"Caption":"Microsoft Windows 10 Pro","Version":"10.0.19045","BuildNumber":"19045","OSArchitecture":"64-bit"}'
+        if "Win32_VideoController" in script:
+            return (
+                '[{"Name":"NVIDIA GeForce GTX 1660","AdapterRAM":6442450944,'
+                '"DriverVersion":"1.2.3","PNPDeviceID":"PCI\\\\VEN_10DE"},'
+                '{"Name":"Intel UHD Graphics","AdapterRAM":1073741824,'
+                '"DriverVersion":"4.5.6","PNPDeviceID":"PCI\\\\VEN_8086"}]'
+            )
+        return ""
+
+    monkeypatch.setattr(HardwareManager, "_run_query", query)
+    inventory = HardwareManager().collect_inventory()
+    assert inventory.os_version == "Microsoft Windows 10 Pro 10.0.19045 19045"
+    assert inventory.os_arch == "64-bit"
+    assert len(inventory.gpus) == 2
+    assert inventory.gpus[0].memory_mb == 6144
+    assert inventory.gpus[0].driver_version == "1.2.3"
+    assert inventory.gpus[1].vendor is Vendor.INTEL
