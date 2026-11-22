@@ -54,6 +54,15 @@ class Capability:
             raise ValueError("resource_fields must contain non-empty strings")
         if len(set(self.resource_fields)) != len(self.resource_fields):
             raise ValueError("resource_fields must not contain duplicates")
+        if "*" in self.resource_fields and self.resource_fields != ["*"]:
+            raise ValueError("global resource selector '*' must be declared alone")
+        if (
+            self.idempotency is IdempotencyClass.NON_IDEMPOTENT
+            and not self.resource_fields
+        ):
+            raise ValueError(
+                "side-effecting capabilities must declare resource_fields or explicit ['*']"
+            )
 
     def as_dict(self) -> dict[str, Any]:
         return {
