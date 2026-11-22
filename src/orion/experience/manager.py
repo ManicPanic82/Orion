@@ -174,15 +174,15 @@ class ExperienceRecorder:
         if exp is None:
             raise KeyError(f"experience not found: {experience_id}")
         if any(
-                field in exp.redacted_fields
-                for field in ("feedback", "feedback.content", "content")
-            ):
-                content = "[REDACTED]"
-            if any(
-                field in exp.redacted_fields
-                for field in ("feedback", "feedback.author", "author")
-            ):
-                author = "[REDACTED]"
+            field in exp.redacted_fields
+            for field in ("feedback", "feedback.content", "content")
+        ):
+            content = "[REDACTED]"
+        if any(
+            field in exp.redacted_fields
+            for field in ("feedback", "feedback.author", "author")
+        ):
+            author = "[REDACTED]"
         fb = ExperienceFeedback(content=content, feedback_type=feedback_type, author=author)
         with self._lock:
             exp.feedback.append(fb)
