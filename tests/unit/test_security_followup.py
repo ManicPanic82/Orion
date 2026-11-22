@@ -70,6 +70,7 @@ def test_scoped_read_only_capability_requires_matching_grant() -> None:
     gateway.add_grant(
         PermissionGrant(
             capability_id="read_secret",
+            action="read_secret",
             resource="vault/item",
             scope="secrets.read",
         )
