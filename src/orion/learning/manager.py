@@ -115,10 +115,9 @@ class LearningManager:
             raise ValueError("evaluation must reference a registered dataset with an eval split")
         if metrics.get("eval_dataset_checksum") != dataset.checksum:
             raise ValueError("evaluation dataset checksum does not match the registered dataset")
-        try:
-            evaluated_examples = int(metrics.get("eval_examples", 0))
-        except (TypeError, ValueError):
-            evaluated_examples = 0
+        evaluated_examples = metrics.get("eval_examples")
+        if isinstance(evaluated_examples, bool) or not isinstance(evaluated_examples, int):
+            raise ValueError("evaluation example count must be an integer")
         if evaluated_examples != len(dataset.eval_ids):
             raise ValueError("evaluation example count does not match the held-out split")
         passed = bool(accuracy >= 0.8)
@@ -174,16 +173,18 @@ class LearningManager:
             or metrics.get("eval_dataset_checksum") != dataset.checksum
         ):
             raise ValueError("evaluation lacks registered held-out dataset provenance")
-        try:
-            evaluated_examples = int(metrics.get("eval_examples", 0))
-            accuracy_value = metrics.get("accuracy", -1)
-            accuracy = float(accuracy_value)
-        except (TypeError, ValueError):
-            evaluated_examples = 0
-            accuracy = -1
+        evaluated_examples = metrics.get("eval_examples")
+        accuracy_value = metrics.get("accuracy")
         if (
-            isinstance(accuracy_value, bool)
-            or evaluated_examples != len(dataset.eval_ids)
+            isinstance(evaluated_examples, bool)
+            or not isinstance(evaluated_examples, int)
+            or isinstance(accuracy_value, bool)
+            or not isinstance(accuracy_value, (int, float))
+        ):
+            raise ValueError("evaluation metrics are incomplete or invalid")
+        accuracy = float(accuracy_value)
+        if (
+            evaluated_examples != len(dataset.eval_ids)
             or not math.isfinite(accuracy)
             or not 0 <= accuracy <= 1
         ):
