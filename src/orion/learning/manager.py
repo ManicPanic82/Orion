@@ -100,7 +100,8 @@ class LearningManager:
             )
         accuracy = metrics.get("accuracy")
         if (
-            not isinstance(accuracy, (int, float))
+            isinstance(accuracy, bool)
+            or not isinstance(accuracy, (int, float))
             or not math.isfinite(accuracy)
             or not 0.0 <= accuracy <= 1.0
         ):
@@ -120,10 +121,6 @@ class LearningManager:
             evaluated_examples = 0
         if evaluated_examples != len(dataset.eval_ids):
             raise ValueError("evaluation example count does not match the held-out split")
-        if isinstance(accuracy, bool) or not isinstance(accuracy, (int, float)):
-            raise ValueError("evaluation accuracy must be numeric")
-        if not math.isfinite(accuracy) or not 0.0 <= accuracy <= 1.0:
-            raise ValueError("evaluation accuracy must be finite and between 0 and 1")
         passed = bool(accuracy >= 0.8)
         if metrics.get("regression") is False:
             # Regression checks: a known regression fails the candidate.
