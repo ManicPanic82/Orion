@@ -531,3 +531,21 @@ def test_capability_executor_checks_every_resource_argument() -> None:
         )
     )
     assert executor.execute(step)["success"] is True
+
+
+
+def test_medium_risk_read_only_capability_requires_gateway() -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="inspect_private_data",
+            idempotency=IdempotencyClass.READ_ONLY,
+            risk="medium",
+            handler=lambda payload, cancel_event=None: {"read": True},
+        )
+    )
+    result = CapabilityExecutor(registry).execute(
+        TaskStep(capability_id="inspect_private_data")
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "permission_unavailable"
