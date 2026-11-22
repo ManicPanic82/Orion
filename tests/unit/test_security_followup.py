@@ -468,3 +468,23 @@ def test_in_memory_task_repository_does_not_expose_mutable_records() -> None:
     assert loaded.steps[0].idempotency is TaskIdempotency.NON_IDEMPOTENT
     loaded.steps[0].idempotency = TaskIdempotency.READ_ONLY
     assert manager.get_task(task.task_id).steps[0].idempotency is TaskIdempotency.NON_IDEMPOTENT
+
+
+
+def test_returned_experience_snapshot_cannot_remove_privacy_controls() -> None:
+    recorder = ExperienceRecorder()
+    returned = recorder.capture_experience(
+        objective_id="objective",
+        task_id="task",
+        outcome=OutcomeClass.SUCCESS,
+        metadata={"request": "private-request"},
+    )
+    recorder.redact(returned.experience_id, ["request"])
+    returned.redacted_fields.clear()
+    returned.privacy_state = PrivacyState.APPROVED
+    returned.metadata["request"] = "mutated-secret"
+
+    stored = recorder.get(returned.experience_id)
+    assert stored.privacy_state is PrivacyState.REDACTED
+    assert stored.redacted_fields == ["request"]
+    assert stored.metadata["request"] == "[REDACTED]"
