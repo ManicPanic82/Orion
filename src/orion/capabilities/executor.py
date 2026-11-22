@@ -21,6 +21,11 @@ _RESOURCE_ARGUMENT_KEYS = frozenset(
         "working_dir",
         "cwd",
         "filename",
+        "file",
+        "paths",
+        "files",
+        "source_path",
+        "destination_path",
         "url",
     }
 )
@@ -33,12 +38,13 @@ def _request_resources(value: Any) -> list[str]:
     def visit(item: Any) -> None:
         if isinstance(item, dict):
             for key, child in item.items():
-                if key.lower() in _RESOURCE_ARGUMENT_KEYS and isinstance(
-                    child, (str, int, float)
-                ):
-                    resource = str(child).strip()
-                    if resource:
-                        resources.add(resource)
+                if isinstance(key, str) and key.lower() in _RESOURCE_ARGUMENT_KEYS:
+                    values = child if isinstance(child, (list, tuple)) else [child]
+                    for candidate in values:
+                        if isinstance(candidate, (str, int, float)):
+                            resource = str(candidate).strip()
+                            if resource:
+                                resources.add(resource)
                 visit(child)
         elif isinstance(item, (list, tuple)):
             for child in item:
