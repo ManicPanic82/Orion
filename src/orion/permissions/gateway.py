@@ -14,10 +14,10 @@ from orion.permissions.models import (
     ApprovalStatus,
     AuditRecord,
     AutonomyMode,
+    canonicalize_resource,
     PermissionDecision,
     PermissionGrant,
     PolicyDecision,
-    canonicalize_resource,
 )
 
 
@@ -133,6 +133,7 @@ class PermissionGateway:
         persistent: bool = False,
         one_time: bool = True,
     ) -> ApprovalRequest:
+        resource = canonicalize_resource(resource)
         canonical_args = json.dumps(
             args or {}, sort_keys=True, separators=(",", ":"), default=str
         ).encode("utf-8")
@@ -143,7 +144,7 @@ class PermissionGateway:
         approval = ApprovalRequest(
             capability_id=capability_id,
             action=action or capability_id,
-            resource=canonicalize_resource(resource),
+            resource=resource,
             scope=scope,
             task_id=task_id,
             step_id=step_id,
