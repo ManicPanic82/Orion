@@ -39,6 +39,9 @@ def _request_resources(value: Any, resource_fields: list[str]) -> list[str]:
     argument that the permission layer did not inspect.
     """
     declared = {field_name.lower() for field_name in resource_fields}
+    global_resources = declared == {"*"}
+    if global_resources:
+        declared.clear()
     resources: set[str] = set()
     found_fields: set[str] = set()
 
@@ -55,9 +58,12 @@ def _request_resources(value: Any, resource_fields: list[str]) -> list[str]:
                     key.lower() in _RESOURCE_ARGUMENT_KEYS
                     and field_path not in declared
                     and not has_declared_child
+                    and not global_resources
                 ):
                     raise ValueError(f"resource field {field_path!r} is not declared by capability")
-                if field_path in declared:
+                if field_path in declared or (
+                    global_resources and key.lower() in _RESOURCE_ARGUMENT_KEYS
+                ):
                     values = child if isinstance(child, (list, tuple)) else [child]
                     extracted = [
                         str(candidate).strip()
