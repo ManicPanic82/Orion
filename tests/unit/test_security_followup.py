@@ -63,6 +63,14 @@ def test_scoped_read_only_capability_requires_matching_grant() -> None:
     executor = CapabilityExecutor(registry, gateway)
     step = TaskStep(capability_id="read_secret", input={"path": "vault/item"})
 
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="read_secret",
+            action="read_secret",
+            resource="vault/item",
+            scope="",
+        )
+    )
     denied = executor.execute(step)
     assert denied["success"] is False
     assert denied["error_code"] == "permission_denied"
