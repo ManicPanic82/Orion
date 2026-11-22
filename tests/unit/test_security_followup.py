@@ -350,3 +350,15 @@ def test_evaluation_cannot_accept_caller_supplied_pass_result() -> None:
     }
     with pytest.raises(ValueError, match="evaluator output"):
         LearningManager().evaluate_candidate("candidate", metrics=metrics, passed=True)
+
+
+
+def test_empty_grant_selectors_do_not_mean_global_access() -> None:
+    grant = PermissionGrant()
+    assert not grant.matches(
+        "write_file",
+        "/etc/passwd",
+        action="delete",
+        scope="global",
+        args={"path": "/etc/passwd"},
+    )
