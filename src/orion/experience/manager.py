@@ -173,8 +173,7 @@ class ExperienceRecorder:
         exp = self.get(experience_id)
         if exp is None:
             raise KeyError(f"experience not found: {experience_id}")
-        if exp.privacy_state is PrivacyState.REDACTED:
-            if any(
+        if any(
                 field in exp.redacted_fields
                 for field in ("feedback", "feedback.content", "content")
             ):
