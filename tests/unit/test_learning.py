@@ -134,7 +134,7 @@ def test_promotion_requires_evaluation() -> None:
 def test_promotion_requires_candidate_bound_evaluation() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("other", metrics={"accuracy": 0.9})
+    ev = lm.evaluate_candidate("other", metrics=_held_out_metrics(0.9))
     try:
         lm.promote_candidate(profile, evaluation=ev, approved=True)
     except ValueError:
@@ -146,7 +146,7 @@ def test_promotion_requires_candidate_bound_evaluation() -> None:
 def test_promotion_requires_passed_evaluation() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("cand", metrics={"accuracy": 0.5})
+    ev = lm.evaluate_candidate("cand", metrics=_held_out_metrics(0.5))
     try:
         lm.promote_candidate(profile, evaluation=ev, approved=True)
     except ValueError:
@@ -181,7 +181,7 @@ def test_promotion_denied_without_approval() -> None:
 def test_promotion_approved() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("cand", metrics={"accuracy": 0.9})
+    ev = lm.evaluate_candidate("cand", metrics=_held_out_metrics(0.9))
     record = lm.promote_candidate(profile, evaluation=ev, approved=True, approver="user")
     assert record.status.value == "approved"
 
@@ -189,7 +189,7 @@ def test_promotion_approved() -> None:
 def test_rollback_restores_metadata() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("cand", metrics={"accuracy": 0.9})
+    ev = lm.evaluate_candidate("cand", metrics=_held_out_metrics(0.9))
     record = lm.promote_candidate(profile, evaluation=ev, approved=True, previous_profile_id="prev")
     rolled = lm.rollback(record.promotion_id)
     assert rolled.status.value == "rolled_back"
