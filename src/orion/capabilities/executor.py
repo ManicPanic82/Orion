@@ -9,6 +9,45 @@ from orion.capabilities.permissions import PermissionDecision, PermissionGateway
 from orion.capabilities.registry import CapabilityRegistry
 
 
+_RESOURCE_ARGUMENT_KEYS = frozenset(
+    {
+        "resource",
+        "path",
+        "file_path",
+        "target",
+        "source",
+        "destination",
+        "directory",
+        "working_dir",
+        "cwd",
+        "filename",
+        "url",
+    }
+)
+
+
+def _request_resources(value: Any) -> list[str]:
+    """Collect every declared resource path from nested capability arguments."""
+    resources: set[str] = set()
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if key.lower() in _RESOURCE_ARGUMENT_KEYS and isinstance(
+                    child, (str, int, float)
+                ):
+                    resource = str(child).strip()
+                    if resource:
+                        resources.add(resource)
+                visit(child)
+        elif isinstance(item, (list, tuple)):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return sorted(resources) or [""]
+
+
 class CapabilityExecutor:
     def __init__(
         self,
@@ -36,13 +75,7 @@ class CapabilityExecutor:
         # planner's claimed idempotency value. Capability metadata is trusted
         # application configuration; step input is request data.
         step_input = dict(getattr(step, "input", {}) or {})
-        resource = str(
-            step_input.get("resource")
-            or step_input.get("path")
-            or step_input.get("file_path")
-            or step_input.get("target")
-            or ""
-        )
+        resources = _request_resources(step_input)
         scopes = list(capability.required_scopes) or [str(getattr(step, "scope", "") or "")]
         needs_permission = (
             capability.idempotency.value != "read_only"
@@ -57,23 +90,24 @@ class CapabilityExecutor:
                     "error_code": "permission_unavailable",
                 }
             for scope in scopes:
-                decision = gateway.decide(
-                    capability_id,
-                    resource=resource,
-                    action=str(getattr(step, "action", "") or capability_id),
-                    scope=scope,
-                    risk=capability.risk.value,
-                    task_id=getattr(step, "task_id", None),
-                    step_id=getattr(step, "step_id", ""),
-                    idempotency=capability.idempotency.value,
-                    args=step_input,
-                )
-                if decision.decision is not PermissionDecision.ALLOW:
-                    return {
-                        "success": False,
-                        "error": f"permission {decision.decision.value}",
-                        "error_code": "permission_denied",
-                    }
+                for resource in resources:
+                    decision = gateway.decide(
+                        capability_id,
+                        resource=resource,
+                        action=str(getattr(step, "action", "") or capability_id),
+                        scope=scope,
+                        risk=capability.risk.value,
+                        task_id=getattr(step, "task_id", None),
+                        step_id=getattr(step, "step_id", ""),
+                        idempotency=capability.idempotency.value,
+                        args=step_input,
+                    )
+                    if decision.decision is not PermissionDecision.ALLOW:
+                        return {
+                            "success": False,
+                            "error": f"permission {decision.decision.value}",
+                            "error_code": "permission_denied",
+                        }
 
         if cancel_event is not None and cancel_event.is_set():
             return {"success": False, "error": "cancelled", "error_code": "cancelled"}
