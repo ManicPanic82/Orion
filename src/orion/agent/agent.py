@@ -55,12 +55,22 @@ class ResidentAgent:
             from orion.tasks.models import TaskStep
 
             try:
-                idem = IdempotencyClass(ps.idempotency)
+                IdempotencyClass(ps.idempotency)
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"planner returned invalid idempotency classification for "
                     f"{ps.capability_id!r}: {ps.idempotency!r}"
                 ) from exc
+            try:
+                capability = self.registry.get(ps.capability_id)
+            except KeyError as exc:
+                raise ValueError(
+                    f"planner referenced unknown capability: {ps.capability_id!r}"
+                ) from exc
+            # Persist the classification from the registered capability, not
+            # the planner. Planner output is untrusted and cannot downgrade a
+            # side effect to read-only for crash recovery.
+            idem = IdempotencyClass(capability.idempotency.value)
             task_steps.append(
                 TaskStep(
                     task_id="",
@@ -83,6 +93,34 @@ class ResidentAgent:
         return self.create_task_from_objective(objective, request_id=request_id)
 
     def run_task(self, task_id: str) -> Task:
+        task = self.task_manager.get_task(task_id)
+        # Reconcile persisted classifications against trusted capability
+        # metadata before any recovery or execution decision.
+        for step in task.steps:
+            try:
+                capability = self.registry.get(step.capability_id)
+            except KeyError:
+                return self.task_manager.update_task(
+                    task_id,
+                    state=TaskState.PAUSED,
+                    recovery_safe=False,
+                    failure_code="unknown_capability_requires_review",
+                )
+            trusted_idempotency = IdempotencyClass(capability.idempotency.value)
+            if step.state is TaskStepState.RUNNING and (
+                trusted_idempotency is IdempotencyClass.NON_IDEMPOTENT
+            ):
+                self.task_manager.update_task(
+                    task_id,
+                    state=TaskState.PAUSED,
+                    recovery_safe=False,
+                    failure_code="unsafe_recovery_requires_review",
+                )
+                return self.task_manager.get_task(task_id)
+            if step.idempotency is not trusted_idempotency:
+                self.task_manager.update_step(
+                    task_id, step.step_id, idempotency=trusted_idempotency
+                )
         task = self.task_manager.get_task(task_id)
         if not task.recovery_safe:
             # Recovery quarantined an ambiguous in-flight side effect. Do not
