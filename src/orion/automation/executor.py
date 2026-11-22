@@ -29,13 +29,16 @@ _PROTECTED_ENV_KEYS = frozenset(
         "LD_PRELOAD",
         "LD_LIBRARY_PATH",
         "DYLD_INSERT_LIBRARIES",
+        "GIT_PAGER",
+        "PAGER",
+        "GIT_OPTIONAL_LOCKS",
+        "GIT_CONFIG_NOSYSTEM",
     }
 )
 
 
 _DETERMINISTIC_READ_ONLY_COMMANDS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     (frozenset({"git.exe", "git"}), ("status",)),
-    (frozenset({"git.exe", "git"}), ("log",)),
 )
 
 
@@ -117,7 +120,9 @@ class AutomationExecutor:
         if resolved_executable is None:
             raise ValueError(f"executable is not allowlisted or could not be resolved: {request.executable}")
         protected_overrides = {
-            key.upper() for key in (request.env or {}) if key.upper() in _PROTECTED_ENV_KEYS
+            key.upper()
+            for key in (request.env or {})
+            if key.upper() in _PROTECTED_ENV_KEYS or key.upper().startswith("GIT_")
         }
         if protected_overrides:
             raise ValueError(
@@ -183,13 +188,35 @@ class AutomationExecutor:
             finally:
                 pipe.close()
 
+        command_args = list(request.args)
+        process_env = {**os.environ, **request.env} if request.env else dict(os.environ)
+        if classify_request(request) is IdempotencyClass.READ_ONLY:
+            # The only unprivileged command is Git status with optional writes,
+            # filesystem monitors, and pagers disabled.
+            command_args = [
+                "--no-pager",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+                "--no-optional-locks",
+                "status",
+                *request.args[1:],
+            ]
+            process_env.update(
+                {
+                    "GIT_OPTIONAL_LOCKS": "0",
+                    "GIT_PAGER": "cat",
+                    "PAGER": "cat",
+                }
+            )
         try:
             proc = subprocess.Popen(
-                [executable, *request.args],
+                [executable, *command_args],
                 cwd=str(working_dir) if working_dir is not None else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env={**os.environ, **request.env} if request.env else None,
+                env=process_env,
                 text=False,
             )
         except Exception as exc:
