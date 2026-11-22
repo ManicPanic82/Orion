@@ -21,7 +21,7 @@ This pass addresses findings from the subsequent source audit:
 | Capability permission scopes were not enforced | Required scope is passed to the gateway; scoped read-only capabilities also require a matching grant/approval; unsupported multi-scope declarations fail closed |
 | Grant constraints were ignored | Supports exact `required_args` and list-valued `allowed_args`; unknown/malformed constraint keys deny the grant |
 | Wildcard resource prefix matched sibling paths | Wildcards now require a path-separator boundary |
-| Approval IDs were not fully request-bound | Capability, action, resource, scope, argument hash, task ID and step ID must all match exactly; empty context is not a wildcard |
+| Approval IDs were not fully request-bound | Capability, action, resource, scope, argument hash, task ID and step ID must all match exactly; empty context is not a wildcard; unknown explicit approval IDs are denied |
 | Unknown planner idempotency became read-only | Unknown classifications become non-idempotent; registered capability metadata remains authoritative and planner classifications can only make recovery more conservative |
 | Supervisor blocked in child wait/backoff | Child wait is monitored on a worker thread; stop terminates and, if necessary, kills the child; restart backoff observes the stop event |
 | Nested experience feedback escaped redaction | Nested mappings, action inputs/results and feedback content are scrubbed in stored data and exports |
