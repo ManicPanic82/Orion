@@ -8,7 +8,7 @@ import threading
 import pytest
 
 from orion.agent import ResidentAgent
-from orion.automation import AutomationExecutor
+from orion.automation import AutomationExecutor, ExecutionRequest
 from orion.agent.models import PlannedStep
 from orion.capabilities.executor import CapabilityExecutor
 from orion.capabilities.models import Capability, IdempotencyClass
@@ -689,3 +689,18 @@ def test_automation_allowlists_cannot_be_mutated_after_construction(tmp_path) ->
         executor.approved_roots = ("C:/",)
     with pytest.raises(AttributeError):
         executor.permission_gateway = PermissionGateway()
+
+
+
+def test_automation_rejects_environment_path_hijacking(tmp_path) -> None:
+    executor = AutomationExecutor(
+        approved_roots=[str(tmp_path)],
+        allowed_executables={"python.exe"},
+    )
+    request = ExecutionRequest(
+        executable="python.exe",
+        working_dir=str(tmp_path),
+        env={"PATH": "C:/attacker"},
+    )
+    with pytest.raises(ValueError, match="environment cannot override"):
+        executor.validate_request(request)
