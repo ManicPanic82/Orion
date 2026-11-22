@@ -56,8 +56,11 @@ class ResidentAgent:
 
             try:
                 idem = IdempotencyClass(ps.idempotency)
-            except ValueError:
-                idem = IdempotencyClass.READ_ONLY
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"planner returned invalid idempotency classification for "
+                    f"{ps.capability_id!r}: {ps.idempotency!r}"
+                ) from exc
             task_steps.append(
                 TaskStep(
                     task_id="",
