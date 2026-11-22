@@ -208,7 +208,16 @@ def test_unsafe_running_task_is_quarantined_and_not_resumed() -> None:
         def execute(self, *args, **kwargs):
             raise AssertionError("quarantined task must not execute")
 
-    agent = ResidentAgent(task_manager=manager, executor=MustNotExecute())
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="charge_card",
+            idempotency=IdempotencyClass.NON_IDEMPOTENT,
+        )
+    )
+    agent = ResidentAgent(
+        task_manager=manager, registry=registry, executor=MustNotExecute()
+    )
     assert agent.run_task(task.task_id).state is TaskState.PAUSED
 
 
