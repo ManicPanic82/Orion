@@ -148,6 +148,8 @@ def test_deterministic_read_only_classification() -> None:
     assert classify_request(req) is IdempotencyClass.READ_ONLY
     req.args = ["push"]
     assert classify_request(req) is IdempotencyClass.NON_IDEMPOTENT
+    req.args = ["log"]
+    assert classify_request(req) is IdempotencyClass.NON_IDEMPOTENT
     # Non-allowlisted commands are never classified read-only.
     req.executable = "powershell.exe"
     req.args = ["-Command", "Get-Date"]
