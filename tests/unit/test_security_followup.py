@@ -602,3 +602,30 @@ def test_malformed_permission_expiry_and_constraints_fail_closed() -> None:
 
     approval = ApprovalRequest(expires_at="not-a-timestamp")
     assert approval.is_expired() is True
+
+
+
+def test_resource_grant_does_not_follow_symlink_outside_root(tmp_path) -> None:
+    trusted = tmp_path / "trusted"
+    outside = tmp_path / "outside"
+    trusted.mkdir()
+    outside.mkdir()
+    link = trusted / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlink creation is unavailable")
+
+    grant = PermissionGrant(
+        capability_id="write_file",
+        action="write",
+        resource=f"{trusted}/*",
+        scope="project",
+    )
+    escaped = str(link / "secret.txt")
+    assert not grant.matches(
+        "write_file",
+        escaped,
+        action="write",
+        scope="project",
+    )
