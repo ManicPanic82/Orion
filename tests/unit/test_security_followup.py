@@ -111,6 +111,13 @@ def test_grant_constraints_and_path_wildcards_are_segment_aware() -> None:
     )
     assert not grant.matches(
         "write_file",
+        "C:/Projects/Trusted/../TrustedEvil/file.txt",
+        action="write",
+        scope="project",
+        args={"path": "C:/Projects/Trusted/../TrustedEvil/file.txt"},
+    )
+    assert not grant.matches(
+        "write_file",
         "C:/Projects/Trusted/file.txt",
         action="write",
         scope="project",
