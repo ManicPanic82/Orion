@@ -13,7 +13,14 @@ from orion.capabilities.executor import CapabilityExecutor
 from orion.capabilities.models import Capability, IdempotencyClass
 from orion.capabilities.registry import CapabilityRegistry
 from orion.core.supervisor import CoreSupervisor, RestartPolicy
-from orion.experience import ExperienceAction, ExperienceRecorder, OutcomeClass
+from orion.experience import (
+    Experience,
+    ExperienceAction,
+    ExperienceFeedback,
+    ExperienceRecorder,
+    OutcomeClass,
+    PrivacyState,
+)
 from orion.hardware import HardwareManager
 from orion.permissions.gateway import PermissionGateway
 from orion.permissions.models import (
@@ -371,3 +378,24 @@ def test_empty_grant_selectors_do_not_mean_global_access() -> None:
         scope="global",
         args={"path": "/etc/passwd"},
     )
+
+
+
+def test_redacted_experience_export_masks_legacy_nested_feedback() -> None:
+    experience = Experience(
+        privacy_state=PrivacyState.REDACTED,
+        redacted_fields=["feedback.content"],
+        actions=[
+            ExperienceAction(
+                capability_id="read_secret",
+                input={"nested": {"token": "legacy-action-secret"}},
+            )
+        ],
+        feedback=[ExperienceFeedback(content="legacy-feedback-secret")],
+        metadata={"nested": {"token": "legacy-metadata-secret"}},
+    )
+    exported = json.dumps(experience.as_dict(redact=True), sort_keys=True)
+    assert "legacy-action-secret" not in exported
+    assert "legacy-feedback-secret" not in exported
+    assert "legacy-metadata-secret" in exported
+    assert experience.feedback[0].content == "legacy-feedback-secret"
