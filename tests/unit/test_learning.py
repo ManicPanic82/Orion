@@ -168,19 +168,29 @@ def test_promotion_denied_without_approval() -> None:
         raise AssertionError("promotion should require approval")
 
 
-def test_promotion_approved() -> None:
+def test_promotion_rejected_without_trusted_evaluator() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
     ev = lm.evaluate_candidate("cand", metrics={"accuracy": 0.9})
-    record = lm.promote_candidate(profile, evaluation=ev, approved=True, approver="user")
-    assert record.status.value == "approved"
+    assert ev.passed is False
+    try:
+        lm.promote_candidate(profile, evaluation=ev, approved=True, approver="user")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("uncertified evaluation must not permit promotion")
 
 
 def test_rollback_restores_metadata() -> None:
+    from orion.learning.models import PromotionRecord, PromotionStatus
+
     lm = LearningManager()
-    profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("cand", metrics={"accuracy": 0.9})
-    record = lm.promote_candidate(profile, evaluation=ev, approved=True, previous_profile_id="prev")
+    record = PromotionRecord(
+        candidate_profile_id="cand",
+        previous_profile_id="prev",
+        status=PromotionStatus.APPROVED,
+    )
+    lm._promotions[record.promotion_id] = record
     rolled = lm.rollback(record.promotion_id)
     assert rolled.status.value == "rolled_back"
 
