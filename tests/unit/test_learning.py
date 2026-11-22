@@ -200,3 +200,13 @@ def test_redacted_experience_does_not_leak_into_dataset() -> None:
     blob = dataset.to_jsonl()
     assert "secret-request" not in blob
     assert "secret-summary" not in blob
+
+
+def test_caller_cannot_supply_passed_true() -> None:
+    lm = LearningManager()
+    try:
+        lm.evaluate_candidate("cand1", metrics={"accuracy": 1.0}, passed=True)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("caller-supplied pass/fail must be rejected")
