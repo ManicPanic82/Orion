@@ -69,7 +69,11 @@ class ResidentAgent:
             idem = (
                 IdempotencyClass.NON_IDEMPOTENT
                 if planned_idempotency is IdempotencyClass.NON_IDEMPOTENT
-                else registered.idempotency
+                else (
+                    planned_idempotency
+                    if planned_idempotency is IdempotencyClass.IDEMPOTENT
+                    else registered.idempotency
+                )
             )
             task_steps.append(
                 TaskStep(
