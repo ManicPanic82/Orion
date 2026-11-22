@@ -293,7 +293,7 @@ def test_hardware_inventory_reports_multiple_gpus_and_windows_os(monkeypatch) ->
                         "Name": "NVIDIA GeForce RTX 4090",
                         "DriverVersion": "555.1",
                         "PNPDeviceID": "GPU-0",
-                        "AdapterRAM": 24 * 1024**3,
+                        "AdapterRAM": 4 * 1024**3,
                     },
                     {
                         "Name": "Intel UHD Graphics",
@@ -303,6 +303,8 @@ def test_hardware_inventory_reports_multiple_gpus_and_windows_os(monkeypatch) ->
                     },
                 ]
             )
+        if "nvidia-smi" in script:
+            return "NVIDIA GeForce RTX 4090, 24564, 555.1, GPU-0"
         return ""
 
     monkeypatch.setattr(HardwareManager, "_run_query", query)
@@ -310,7 +312,7 @@ def test_hardware_inventory_reports_multiple_gpus_and_windows_os(monkeypatch) ->
     assert inventory.os_version == "Microsoft Windows 11 Pro 10.0 22631"
     assert inventory.ram_mb == 32768
     assert len(inventory.gpus) == 2
-    assert inventory.gpus[0].memory_mb == 24576
+    assert inventory.gpus[0].memory_mb == 24564
     assert inventory.gpus[0].driver_version == "555.1"
     assert inventory.gpus[1].name == "Intel UHD Graphics"
 
