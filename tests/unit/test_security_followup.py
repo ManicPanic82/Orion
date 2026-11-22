@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 
 import pytest
 
 from orion.agent import ResidentAgent
-from orion.automation import AutomationExecutor, ExecutionRequest
 from orion.agent.models import PlannedStep
+from orion.automation import AutomationExecutor, ExecutionRequest
 from orion.capabilities.executor import CapabilityExecutor
 from orion.capabilities.models import Capability, IdempotencyClass
 from orion.capabilities.registry import CapabilityRegistry
@@ -698,7 +699,7 @@ def test_automation_rejects_environment_path_hijacking(tmp_path) -> None:
         allowed_executables={"python.exe"},
     )
     request = ExecutionRequest(
-        executable="python.exe",
+        executable=sys.executable,
         working_dir=str(tmp_path),
         env={"PATH": "C:/attacker"},
     )
