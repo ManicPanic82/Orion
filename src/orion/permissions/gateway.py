@@ -17,6 +17,7 @@ from orion.permissions.models import (
     PermissionDecision,
     PermissionGrant,
     PolicyDecision,
+    canonicalize_resource,
 )
 
 
@@ -58,6 +59,9 @@ class PermissionGateway:
     def add_grant(self, grant: PermissionGrant) -> PermissionGrant:
         with self._lock:
             stored = copy.deepcopy(grant)
+            if not stored.resource_is_canonical:
+                stored.resource = canonicalize_resource(stored.resource)
+                stored.resource_is_canonical = True
             self._grants[stored.grant_id] = stored
             return copy.deepcopy(stored)
 
@@ -140,7 +144,7 @@ class PermissionGateway:
         approval = ApprovalRequest(
             capability_id=capability_id,
             action=action or capability_id,
-            resource=resource,
+            resource=canonicalize_resource(resource),
             scope=scope,
             task_id=task_id,
             step_id=step_id,
@@ -195,6 +199,7 @@ class PermissionGateway:
                     capability_id=approval.capability_id,
                     action=approval.action,
                     resource=approval.resource,
+                    resource_is_canonical=True,
                     scope=approval.scope,
                     persistent=True,
                     expires_at=approval.expires_at,
@@ -252,6 +257,7 @@ class PermissionGateway:
         mode: AutonomyMode | str | None = None,
         autonomy_mode: AutonomyMode | str | None = None,
     ) -> PolicyDecision:
+        resource = canonicalize_resource(resource)
         with self._lock:
             effective_mode = mode if mode is not None else autonomy_mode
             if effective_mode is None:
