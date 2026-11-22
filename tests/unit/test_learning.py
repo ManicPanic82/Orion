@@ -221,3 +221,31 @@ def test_caller_cannot_supply_passed_true() -> None:
         pass
     else:
         raise AssertionError("caller-supplied pass/fail must be rejected")
+
+def test_forged_evaluation_result_cannot_promote_candidate() -> None:
+    lm = LearningManager()
+    profile = ModelProfile(profile_id="cand", base_model="mock-base")
+    forged = EvaluationResult(
+        candidate_profile_id="cand",
+        metrics={"accuracy": 1.0},
+        passed=True,
+    )
+    try:
+        lm.promote_candidate(profile, evaluation=forged, approved=True)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unregistered evaluation must be rejected")
+
+
+def test_mutated_evaluation_evidence_cannot_promote_candidate() -> None:
+    lm = LearningManager()
+    profile = ModelProfile(profile_id="cand", base_model="mock-base")
+    evaluation = lm.evaluate_candidate("cand", metrics={"accuracy": 1.0})
+    evaluation.passed = True
+    try:
+        lm.promote_candidate(profile, evaluation=evaluation, approved=True)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("mutated evaluation evidence must be rejected")
