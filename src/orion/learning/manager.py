@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import datetime
 import math
 import threading
@@ -128,14 +129,14 @@ class LearningManager:
             details="evaluation completed",
         )
         with self._lock:
-            self._evaluations[ev.evaluation_id] = ev
+            self._evaluations[ev.evaluation_id] = copy.deepcopy(ev)
         return ev
 
     def get_evaluation(self, evaluation_id: str) -> EvaluationResult:
         with self._lock:
             if evaluation_id not in self._evaluations:
                 raise KeyError(f"evaluation not found: {evaluation_id}")
-            return self._evaluations[evaluation_id]
+            return copy.deepcopy(self._evaluations[evaluation_id])
 
     # -- promotion -------------------------------------------------------
 
@@ -156,7 +157,7 @@ class LearningManager:
             raise ValueError("promotion requires a held-out evaluation result")
         with self._lock:
             registered = self._evaluations.get(evaluation.evaluation_id)
-        if registered is None or registered is not evaluation:
+        if registered is None or registered != evaluation:
             raise ValueError("promotion requires an evaluation issued by this LearningManager")
         metrics = evaluation.metrics
         if (
