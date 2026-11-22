@@ -58,20 +58,46 @@ class PermissionGrant:
             return False
 
     def matches(
-        self, capability_id: str, resource: str, *, action: str = "", scope: str = ""
+        self,
+        capability_id: str,
+        resource: str,
+        *,
+        action: str = "",
+        scope: str = "",
+        args: dict[str, Any] | None = None,
     ) -> bool:
-        if self.capability_id and self.capability_id != capability_id:
+        """Match a grant against the complete request context.
+
+        Resource wildcards are segment-aware. Constraints are exact argument
+        predicates using dotted paths; malformed or unknown constraints fail closed.
+        """
+        if self.capability_id != capability_id:
             return False
-        if self.resource and self.resource not in ("*", ""):
-            if self.resource.endswith("*"):
-                if not resource.startswith(self.resource[:-1]):
+        if self.action != action or self.scope != scope:
+            return False
+
+        granted = self.resource.replace("\\", "/")
+        requested = resource.replace("\\", "/")
+        if granted not in ("", "*"):
+            if granted.endswith("*"):
+                root = granted[:-1].rstrip("/")
+                if requested != root and not requested.startswith(root + "/"):
                     return False
-            elif self.resource != resource:
+            elif granted != requested:
                 return False
-        # Grants store action and scope; enforce both when set.
-        if self.action and self.action != action:
-            return False
-        return not (self.scope and self.scope != scope)
+
+        request_args = args or {}
+        for key, expected in self.constraints.items():
+            if not isinstance(key, str) or not key:
+                return False
+            current: Any = request_args
+            for part in key.split("."):
+                if not isinstance(current, dict) or part not in current:
+                    return False
+                current = current[part]
+            if current != expected:
+                return False
+        return True
 
     def as_dict(self) -> dict[str, Any]:
         return {
