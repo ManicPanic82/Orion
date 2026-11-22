@@ -73,6 +73,14 @@ class HardwareManager:
             "| Select-Object Name,DriverVersion,PNPDeviceID,AdapterRAM "
             "| ConvertTo-Json -Compress"
         )
+        # WMI AdapterRAM is a 32-bit field on Windows and cannot reliably
+        # represent modern GPUs with more than 4 GiB. Prefer nvidia-smi when
+        # available for NVIDIA VRAM, driver, and device identity.
+        nvidia_raw = self._run_query(
+            "$tool = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue; "
+            "if ($tool) { & $tool.Source --query-gpu=name,memory.total,driver_version,uuid "
+            "--format=csv,noheader,nounits }"
+        )
 
         os_version = platform.platform()
         if os_raw:
@@ -132,6 +140,22 @@ class HardwareManager:
             python_version=sys.version.split()[0],
             gpus=gpus or [GPUInfo(name="unknown", vendor=Vendor.OTHER)],
         )
+        for line in nvidia_raw.splitlines():
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 4:
+                continue
+            name, memory_text, driver, device_id = parts[:4]
+            try:
+                memory_mb = int(memory_text)
+            except ValueError:
+                memory_mb = 0
+            match = next((gpu for gpu in gpus if gpu.name == name), None)
+            if match is None:
+                match = GPUInfo(name=name, vendor=_vendor_for_name(name))
+                gpus.append(match)
+            match.memory_mb = max(memory_mb, 0)
+            match.driver_version = driver
+            match.device_id = device_id
         self._inventory = inventory
         return inventory
 
