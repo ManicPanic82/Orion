@@ -441,3 +441,15 @@ def test_returned_permission_objects_cannot_mutate_gateway_policy() -> None:
         idempotency="non_idempotent",
     )
     assert decision.decision is PermissionDecision.DENY
+
+
+
+def test_capability_registry_does_not_expose_mutable_security_metadata() -> None:
+    capability = Capability(capability_id="write_file")
+    registry = CapabilityRegistry()
+    registry.register(capability)
+
+    capability.idempotency = IdempotencyClass.READ_ONLY
+    returned = registry.get("write_file")
+    returned.idempotency = IdempotencyClass.READ_ONLY
+    assert registry.get("write_file").idempotency is IdempotencyClass.NON_IDEMPOTENT
