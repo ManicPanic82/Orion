@@ -43,6 +43,7 @@ def test_capability_defaults_to_non_idempotent_and_fails_closed() -> None:
     invoked = []
     capability = Capability(
         capability_id="dangerous",
+        resource_fields=["*"],
         handler=lambda payload, cancel_event=None: invoked.append(payload),
     )
     assert capability.idempotency is IdempotencyClass.NON_IDEMPOTENT
@@ -448,7 +449,7 @@ def test_returned_permission_objects_cannot_mutate_gateway_policy() -> None:
 
 
 def test_capability_registry_does_not_expose_mutable_security_metadata() -> None:
-    capability = Capability(capability_id="write_file")
+    capability = Capability(capability_id="write_file", resource_fields=["*"])
     registry = CapabilityRegistry()
     registry.register(capability)
 
