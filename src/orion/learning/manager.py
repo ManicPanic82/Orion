@@ -62,6 +62,12 @@ class LearningManager:
         base_model_revision: str = "",
         config: dict[str, Any] | None = None,
     ) -> TrainingRun:
+        with self._lock:
+            registered = self._datasets.get(dataset.dataset_id)
+        if registered is None or registered != dataset:
+            raise ValueError("training requires a dataset built and registered by this LearningManager")
+        if not dataset.train_ids:
+            raise ValueError("training dataset must contain at least one training example")
         run = TrainingRun(
             dataset_id=dataset.dataset_id,
             dataset_version=dataset.version,
