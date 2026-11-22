@@ -83,6 +83,10 @@ def _request_resources(value: Any, resource_fields: list[str]) -> list[str]:
     missing = declared - found_fields
     if missing:
         raise ValueError(f"declared resource fields are missing: {', '.join(sorted(missing))}")
+    if global_resources:
+        # A global capability must receive a global grant, never a narrower
+        # grant accidentally matched against only one of its inputs.
+        return ["*"]
     return sorted(resources) or [""]
 
 
