@@ -83,10 +83,13 @@ class CapabilityExecutor:
         step_input = dict(getattr(step, "input", {}) or {})
         resources = _request_resources(step_input)
         scopes = list(capability.required_scopes) or [str(getattr(step, "scope", "") or "")]
-        needs_permission = (
-            capability.idempotency.value != "read_only"
-            or any(scopes)
-        )
+        # Medium/high/critical risk requires a gateway decision even when
+        # the operation is technically read-only. This prevents a sensitive
+        # read from inheriting the unscoped read-only default.
+        permission_idempotency = capability.idempotency.value
+        if capability.risk.value != "low":
+            permission_idempotency = "non_idempotent"
+        needs_permission = permission_idempotency != "read_only" or any(scopes)
         if needs_permission:
             gateway = self.permission_gateway
             if gateway is None:
@@ -105,7 +108,7 @@ class CapabilityExecutor:
                         risk=capability.risk.value,
                         task_id=getattr(step, "task_id", None),
                         step_id=getattr(step, "step_id", ""),
-                        idempotency=capability.idempotency.value,
+                        idempotency=permission_idempotency,
                         args=step_input,
                     )
                     if decision.decision is not PermissionDecision.ALLOW:
