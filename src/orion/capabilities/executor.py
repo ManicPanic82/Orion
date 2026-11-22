@@ -61,7 +61,7 @@ class CapabilityExecutor:
             decision = gateway.decide(
                 capability_id,
                 resource=resource,
-                action=capability_id,
+                action=str(args.get("action") or capability_id),
                 scope=scope,
                 risk=capability.risk.value,
                 task_id=getattr(step, "task_id", None) or None,
