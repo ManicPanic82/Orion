@@ -252,3 +252,24 @@ def test_evaluation_requires_a_registered_held_out_dataset() -> None:
     }
     with pytest.raises(ValueError, match="registered dataset"):
         lm.evaluate_candidate("cand", metrics=metrics)
+
+
+
+def test_training_rejects_unregistered_or_mutated_dataset() -> None:
+    recorder, _ = _eligible_experience()
+    second = recorder.capture_experience(
+        objective_id="second-objective",
+        task_id="second-task",
+        outcome=OutcomeClass.SUCCESS,
+    )
+    recorder.review_privacy(second.experience_id, PrivacyState.APPROVED)
+    recorder.review_quality(second.experience_id, QualityState.APPROVED)
+    manager = LearningManager()
+    unregistered = build_dataset(recorder.list_experiences())
+    with pytest.raises(ValueError, match="built and registered"):
+        manager.submit_training(unregistered)
+
+    registered = manager.build_dataset(recorder.list_experiences())
+    registered.examples[0].input["objective"] = "tampered"
+    with pytest.raises(ValueError, match="built and registered"):
+        manager.submit_training(registered)
