@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import ntpath
+import posixpath
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-import ntpath
-import posixpath
 from typing import Any
 from uuid import uuid4
 
