@@ -14,8 +14,8 @@ from orion.permissions.models import (
     ApprovalStatus,
     AuditRecord,
     AutonomyMode,
-    PermissionDecision,
     canonicalize_resource,
+    PermissionDecision,
     PermissionGrant,
     PolicyDecision,
 )
