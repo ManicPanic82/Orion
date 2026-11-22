@@ -629,3 +629,17 @@ def test_resource_grant_does_not_follow_symlink_outside_root(tmp_path) -> None:
         action="write",
         scope="project",
     )
+
+
+
+def test_supervisor_does_not_spawn_when_shutdown_is_already_requested() -> None:
+    stop = threading.Event()
+    stop.set()
+    spawned = []
+
+    supervisor = CoreSupervisor(
+        RestartPolicy(max_restarts=2, initial_delay_s=0, max_delay_s=0)
+    )
+    result = supervisor.supervise(lambda: spawned.append(object()), stop_event=stop)
+    assert result == 0
+    assert spawned == []
