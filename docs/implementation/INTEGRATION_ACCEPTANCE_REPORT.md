@@ -216,7 +216,7 @@ repair pass. These changes are isolated on `security/follow-up-hardening`.
 | Training accepted unregistered or caller-mutated datasets | LearningManager accepts only its own registered dataset snapshots with a non-empty training split. |
 | Hardware inventory omitted GPUs and misreported OS/VRAM | Inventory reports Windows OS details, all detected adapters, and NVIDIA VRAM/driver/device identity via nvidia-smi where available. Capped WMI adapter memory is not presented as reliable VRAM. |
 
-Twenty-five focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained four dataset/evaluation tests and `tests/unit/test_projects.py` gained one project-root snapshot test. Existing experience, permission, and automation tests were updated for snapshot and exact-grant semantics. In total, 30 additional regression tests are authored on this branch. The follow-up changes have not been
+Twenty-seven focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained four dataset/evaluation tests and `tests/unit/test_projects.py` gained one project-root snapshot test. Existing experience, permission, and automation tests were updated for snapshot and exact-grant semantics. In total, 32 additional regression tests are authored on this branch. The follow-up changes have not been
 executed in the user's Windows environment from this audit session. The
 previous 281-passed/Ruff/smoke results apply to the earlier repair baseline,
 not this follow-up branch.
