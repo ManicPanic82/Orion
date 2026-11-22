@@ -32,8 +32,25 @@ class CapabilityExecutor:
                 "error_code": "unavailable",
             }
 
-        # Permission check for side-effecting capabilities.
-        if capability.idempotency.value != "read_only":
+        args = dict(getattr(step, "input", {}) or {})
+        # Required scopes are application-owned capability metadata. A single
+        # scope maps directly to the gateway's scope field; combinations are
+        # rejected until the gateway supports an explicit multi-scope contract.
+        required_scopes = tuple(capability.required_scopes)
+        if len(required_scopes) > 1:
+            return {
+                "success": False,
+                "error": "capability declares multiple unsupported permission scopes",
+                "error_code": "unsupported_permission_scopes",
+            }
+        scope = required_scopes[0] if required_scopes else str(getattr(step, "scope", "") or "")
+        resource = str(args.get("resource") or args.get("path") or "")
+        idempotency = capability.idempotency.value
+
+        # Only capabilities explicitly registered by application code as
+        # READ_ONLY may bypass the gateway. The default classification is
+        # NON_IDEMPOTENT, never read-only.
+        if idempotency != "read_only":
             gateway = self.permission_gateway
             if gateway is None:
                 return {
@@ -43,10 +60,14 @@ class CapabilityExecutor:
                 }
             decision = gateway.decide(
                 capability_id,
-                resource="",
-                idempotency=capability.idempotency.value,
-                step_id=getattr(step, "step_id", ""),
-                args=dict(getattr(step, "input", {}) or {}),
+                resource=resource,
+                action=capability_id,
+                scope=scope,
+                risk=capability.risk.value,
+                task_id=getattr(step, "task_id", None) or None,
+                step_id=getattr(step, "step_id", "") or None,
+                args=args,
+                idempotency=idempotency,
             )
             if decision.decision is not PermissionDecision.ALLOW:
                 return {
@@ -60,10 +81,10 @@ class CapabilityExecutor:
 
         handler = capability.handler
         if handler is None:
-            return {"success": True, "output": {"echo": getattr(step, "input", {})}, "error": None}
+            return {"success": True, "output": {"echo": args}, "error": None}
 
         try:
-            output = handler(dict(getattr(step, "input", {}) or {}), cancel_event=cancel_event)
+            output = handler(args, cancel_event=cancel_event)
             return {"success": True, "output": output, "error": None}
         except Exception as exc:
             return {"success": False, "error": str(exc), "error_code": "execution_failed"}
