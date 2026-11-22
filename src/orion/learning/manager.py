@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import math
 import threading
 from typing import Any
 
@@ -97,8 +98,12 @@ class LearningManager:
                 "passed is evaluator output, not caller input; omit it and provide held-out metrics"
             )
         accuracy = metrics.get("accuracy")
-        if not isinstance(accuracy, (int, float)):
-            raise ValueError("evaluation requires a numeric accuracy metric")
+        if (
+            not isinstance(accuracy, (int, float))
+            or not math.isfinite(accuracy)
+            or not 0.0 <= accuracy <= 1.0
+        ):
+            raise ValueError("evaluation requires a finite accuracy metric between 0 and 1")
         if metrics.get("held_out") is not True:
             raise ValueError("evaluation must identify a held-out dataset")
         if not isinstance(metrics.get("eval_dataset_checksum"), str) or not metrics[
