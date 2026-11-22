@@ -274,7 +274,7 @@ class PermissionGateway:
             effective_action = action or capability_id
             args_hash = hashlib.sha256(repr(sorted((args or {}).items())).encode()).hexdigest()
 
-            # Read-only capabilities are allowed by default.
+            # Only unscoped read-only capabilities are allowed by default.
             if idempotency == "read_only" and not scope:
                 grant = self._find_grant(
                     capability_id, resource, action=effective_action, scope=scope, args=args
