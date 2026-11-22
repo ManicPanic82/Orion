@@ -9,7 +9,7 @@ from typing import Any
 
 from orion.config.paths import app_data_dir
 from orion.core.events import EventStream
-from orion.tasks.models import IdempotencyClass, Objective, Task, TaskState, TaskStep, TaskStepState
+from orion.tasks.models import Objective, Task, TaskState, TaskStep, TaskStepState
 from orion.tasks.repository import SQLiteTaskRepository, TaskRepository
 from orion.tasks.state_machine import transition_step, transition_task
 
