@@ -125,9 +125,12 @@ class CoreSupervisor:
                 else:
                     try:
                         exit_code = child.wait(timeout=0.1)
-                    except TypeError:
-                        # Small test doubles and custom child handles may only
-                        # implement wait(); real Popen instances support timeout.
+                    except TypeError as exc:
+                        if stop_event is not None:
+                            raise RuntimeError(
+                                "child must support poll() or wait(timeout=) for interruptible shutdown"
+                            ) from exc
+                        # Compatibility for simple synchronous test doubles.
                         exit_code = child.wait()
                     except subprocess.TimeoutExpired:
                         continue
