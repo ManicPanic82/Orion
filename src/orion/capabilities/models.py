@@ -61,7 +61,7 @@ class Capability:
         if "*" in self.resource_fields and self.resource_fields != ["*"]:
             raise ValueError("global resource selector '*' must be declared alone")
         if (
-            self.idempotency is IdempotencyClass.NON_IDEMPOTENT
+            self.idempotency is not IdempotencyClass.READ_ONLY
             and not self.resource_fields
         ):
             raise ValueError(
