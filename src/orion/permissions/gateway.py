@@ -274,7 +274,10 @@ class PermissionGateway:
                 return decision
 
             effective_action = action or capability_id
-            args_hash = hashlib.sha256(repr(sorted((args or {}).items())).encode()).hexdigest()
+            canonical_args = json.dumps(
+                args or {}, sort_keys=True, separators=(",", ":"), default=str
+            ).encode("utf-8")
+            args_hash = hashlib.sha256(canonical_args).hexdigest()
 
             # Read-only capabilities are allowed by default.
             if idempotency == "read_only" and not scope:
