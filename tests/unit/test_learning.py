@@ -8,12 +8,15 @@ from orion.learning.models import EvaluationResult
 from orion.models import ModelProfile
 
 
-def _held_out_metrics(accuracy: float, **extra):
+def _held_out_metrics(manager: LearningManager, accuracy: float, **extra):
+    recorder, _ = _eligible_experience()
+    dataset = manager.build_dataset(recorder.list_experiences())
     return {
         "accuracy": accuracy,
         "held_out": True,
-        "eval_dataset_checksum": "test-held-out-checksum",
-        "eval_examples": 20,
+        "dataset_id": dataset.dataset_id,
+        "eval_dataset_checksum": dataset.checksum,
+        "eval_examples": len(dataset.eval_ids),
         **extra,
     }
 
@@ -93,7 +96,7 @@ def test_mock_trainer_lifecycle() -> None:
 
 def test_candidate_evaluation_records_metrics() -> None:
     lm = LearningManager()
-    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(0.9))
+    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(lm, 0.9))
     assert ev.passed is True
     assert ev.metrics["accuracy"] == 0.9
 
@@ -110,13 +113,13 @@ def test_evaluate_candidate_without_accuracy_metric_rejected() -> None:
 
 def test_evaluate_candidate_low_accuracy_fails() -> None:
     lm = LearningManager()
-    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(0.5))
+    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(lm, 0.5))
     assert ev.passed is False
 
 
 def test_evaluate_candidate_regression_fails() -> None:
     lm = LearningManager()
-    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(0.95, regression=False))
+    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(lm, 0.95, regression=False))
     assert ev.passed is False
 
 
