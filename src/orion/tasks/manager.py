@@ -26,7 +26,14 @@ class TaskManager:
             db_path if db_path is not None else app_data_dir() / "orion.db"
         )
         self._events = events or EventStream()
-        self._request_index: dict[str, str] = {}  # request_id -> task_id
+        # Rebuild deduplication state from durable task history on startup.
+        # Otherwise a repeated client request after restart could create a
+        # duplicate task even though the original request is already persisted.
+        self._request_index: dict[str, str] = {
+            task.request_id: task.task_id
+            for task in self._repository.list()
+            if task.request_id
+        }
         self._cancellations: dict[str, threading.Event] = {}
         self._lock = threading.RLock()
 
