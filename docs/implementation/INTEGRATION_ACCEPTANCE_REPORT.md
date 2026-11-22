@@ -41,9 +41,9 @@ follow-up branch.
 Run from PowerShell on the target Windows workstation:
 
 ```powershell
-.\\.venv\\Scripts\\python.exe -m pytest
-.\\.venv\\Scripts\\python.exe -m ruff check .
-.\\.venv\\Scripts\\python.exe scripts\\smoke_launch.py --offscreen
+.\.venv\\Scripts\\python.exe -m pytest
+.\.venv\\Scripts\\python.exe -m ruff check .
+.\.venv\\Scripts\\python.exe scripts\\smoke_launch.py --offscreen
 ```
 
 The trusted held-out evaluator remains intentionally unimplemented. Candidate
