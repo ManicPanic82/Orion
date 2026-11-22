@@ -122,9 +122,15 @@ class HardwareManager:
         if not gpus:
             gpus.append(GPUInfo(name="unknown", vendor=Vendor.OTHER))
 
+        architecture = str(os_info.get("OSArchitecture") or platform.machine() or "unknown")
+        if architecture.lower().startswith("64"):
+            architecture = "x64"
+        elif architecture.lower().startswith("32"):
+            architecture = "x86"
+
         inventory = HardwareInventory(
             os_version=os_version,
-            os_arch=str(os_info.get("OSArchitecture") or platform.machine() or "unknown"),
+            os_arch=architecture,
             cpu=cpu or "unknown",
             ram_mb=ram_mb,
             python_version=sys.version.split()[0],
