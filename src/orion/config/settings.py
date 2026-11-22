@@ -38,6 +38,8 @@ SCHEMA_VERSION = 1
 DEFAULT_WIDTH = 1440
 DEFAULT_HEIGHT = 900
 DEFAULT_CONSOLE_HEIGHT = 220
+DEFAULT_PORT = 8765
+DEFAULT_HOST = "127.0.0.1"
 MIN_WIDTH = 900
 MAX_WIDTH = 10_000
 MIN_HEIGHT = 600
@@ -121,6 +123,20 @@ class StartupSettings:
 
 
 @dataclass(slots=True)
+class CoreSettings:
+    """Orion Core connection configuration.
+
+    Phase 2 introduces a remote Core process with loopbound API. This settings document
+    defines how the UI connects to the Core service.
+    """
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8765
+    token: str = ""
+
+
+@dataclass(slots=True)
 class UiSettings:
     tray_notice_shown: bool = False
 
@@ -136,6 +152,7 @@ class Settings:
     appearance: AppearanceSettings = field(default_factory=AppearanceSettings)
     startup: StartupSettings = field(default_factory=StartupSettings)
     ui: UiSettings = field(default_factory=UiSettings)
+    core: CoreSettings = field(default_factory=CoreSettings)
 
     # -- serialisation ----------------------------------------------------
 
@@ -162,6 +179,12 @@ class Settings:
                 "prompted": bool(self.startup.prompted),
             },
             "ui": {"tray_notice_shown": bool(self.ui.tray_notice_shown)},
+            "core": {
+                "enabled": bool(self.core.enabled),
+                "host": str(self.core.host),
+                "port": int(self.core.port),
+                "token": self.core.token,
+            },
         }
 
     @classmethod
@@ -175,6 +198,7 @@ class Settings:
         appearance_raw = _section(raw, "appearance", problems)
         startup_raw = _section(raw, "startup", problems)
         ui_raw = _section(raw, "ui", problems)
+        core_raw = _section(raw, "core", problems)
 
         window = WindowSettings(
             width=_int(
@@ -239,6 +263,10 @@ class Settings:
             )
         )
 
+        ui = UiSettings(
+            tray_notice_shown=_bool(ui_raw, "ui", "tray_notice_shown", False, problems),
+        )
+
         startup = StartupSettings(
             enabled=_bool(startup_raw, "startup", "enabled", False, problems),
             prompted=_bool(startup_raw, "startup", "prompted", False, problems),
@@ -246,6 +274,18 @@ class Settings:
 
         ui = UiSettings(
             tray_notice_shown=_bool(ui_raw, "ui", "tray_notice_shown", False, problems),
+        )
+
+        startup = StartupSettings(
+            enabled=_bool(startup_raw, "startup", "enabled", False, problems),
+            prompted=_bool(startup_raw, "startup", "prompted", False, problems),
+        )
+
+        core = CoreSettings(
+            enabled=_bool(core_raw, "core", "enabled", False, problems),
+            host=str(core_raw.get("host", DEFAULT_HOST)),
+            port=int(core_raw.get("port", DEFAULT_PORT)),
+            token=core_raw.get("token", ""),
         )
 
         settings = cls(
@@ -256,6 +296,7 @@ class Settings:
             appearance=appearance,
             startup=startup,
             ui=ui,
+            core=core,
         )
         return settings, problems
 
@@ -282,6 +323,9 @@ class Settings:
                 f"appearance.ui_scale {self.appearance.ui_scale} outside "
                 f"{MIN_UI_SCALE}..{MAX_UI_SCALE}"
             )
+        # Validate Core settings
+        if self.core.port < 1 or self.core.port > 65535:
+            problems.append(f"core.port {self.core.port} outside 1..65535")
         return problems
 
 
