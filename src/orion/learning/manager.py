@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
+import json
 import threading
 from typing import Any
 
@@ -30,6 +32,7 @@ class LearningManager:
         self._datasets: dict[str, DatasetVersion] = {}
         self._runs: dict[str, TrainingRun] = {}
         self._evaluations: dict[str, EvaluationResult] = {}
+        self._evaluation_fingerprints: dict[str, str] = {}
         self._promotions: dict[str, PromotionRecord] = {}
         self._lock = threading.RLock()
 
@@ -83,6 +86,11 @@ class LearningManager:
 
     # -- evaluation ------------------------------------------------------
 
+    @staticmethod
+    def _evaluation_fingerprint(evaluation: EvaluationResult) -> str:
+        payload = json.dumps(evaluation.as_dict(), sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     def evaluate_candidate(
         self,
         candidate_profile_id: str,
@@ -109,6 +117,7 @@ class LearningManager:
         )
         with self._lock:
             self._evaluations[ev.evaluation_id] = ev
+            self._evaluation_fingerprints[ev.evaluation_id] = self._evaluation_fingerprint(ev)
         return ev
 
     def get_evaluation(self, evaluation_id: str) -> EvaluationResult:
@@ -134,6 +143,13 @@ class LearningManager:
         # Mandatory, candidate-specific held-out evaluation before promotion.
         if evaluation is None:
             raise ValueError("promotion requires a held-out evaluation result")
+        with self._lock:
+            registered = self._evaluations.get(evaluation.evaluation_id)
+            expected_fingerprint = self._evaluation_fingerprints.get(evaluation.evaluation_id)
+        if registered is not evaluation or expected_fingerprint is None:
+            raise ValueError("evaluation was not issued by this learning manager")
+        if self._evaluation_fingerprint(evaluation) != expected_fingerprint:
+            raise ValueError("evaluation evidence was modified after it was recorded")
         if not evaluation.metrics:
             raise ValueError("evaluation must record metrics")
         if evaluation.candidate_profile_id != candidate_id:
