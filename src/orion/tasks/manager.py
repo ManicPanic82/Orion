@@ -27,6 +27,11 @@ class TaskManager:
         )
         self._events = events or EventStream()
         self._request_index: dict[str, str] = {}  # request_id -> task_id
+        # Rebuild idempotency keys from durable history so duplicate requests
+        # remain deduplicated after an Orion restart.
+        for existing in self._repository.list():
+            if existing.request_id:
+                self._request_index.setdefault(existing.request_id, existing.task_id)
         self._cancellations: dict[str, threading.Event] = {}
         self._lock = threading.RLock()
 
@@ -170,5 +175,10 @@ class TaskManager:
                     task.recovery_safe = False
         if task.recovery_safe and task.state in {TaskState.RUNNING, TaskState.PAUSED}:
             task.state = TaskState.PAUSED
+        elif not task.recovery_safe:
+            # Never resume a task whose in-flight side effect has an ambiguous
+            # outcome. Keep it paused for explicit user reconciliation.
+            task.state = TaskState.PAUSED
+            task.failure_code = "unsafe_recovery_requires_review"
         self._repository.save(task)
         return task
