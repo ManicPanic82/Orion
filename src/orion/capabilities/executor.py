@@ -48,7 +48,14 @@ def _request_resources(value: Any, resource_fields: list[str]) -> list[str]:
                 if not isinstance(key, str):
                     continue
                 field_path = f"{prefix}.{key.lower()}" if prefix else key.lower()
-                if key.lower() in _RESOURCE_ARGUMENT_KEYS and field_path not in declared:
+                has_declared_child = any(
+                    field_name.startswith(field_path + ".") for field_name in declared
+                )
+                if (
+                    key.lower() in _RESOURCE_ARGUMENT_KEYS
+                    and field_path not in declared
+                    and not has_declared_child
+                ):
                     raise ValueError(f"resource field {field_path!r} is not declared by capability")
                 if field_path in declared:
                     values = child if isinstance(child, (list, tuple)) else [child]
