@@ -71,12 +71,18 @@ class PermissionGateway:
             return list(self._grants.values())
 
     def _find_grant(
-        self, capability_id: str, resource: str, *, action: str = "", scope: str = ""
+        self,
+        capability_id: str,
+        resource: str,
+        *,
+        action: str = "",
+        scope: str = "",
+        args: dict[str, Any] | None = None,
     ) -> PermissionGrant | None:
         now = datetime.now(UTC)
         for grant in self._grants.values():
             if grant.is_active(now) and grant.matches(
-                capability_id, resource, action=action, scope=scope
+                capability_id, resource, action=action, scope=scope, args=args
             ):
                 return grant
         return None
@@ -90,21 +96,19 @@ class PermissionGateway:
         action: str,
         scope: str,
         args_hash: str,
+        task_id: str | None,
+        step_id: str | None,
     ) -> bool:
-        """Return True when an approval is not bound to this exact request.
-
-        An approval may be used only for the complete request it was issued
-        for: same capability, resource, action, scope, and arguments.
-        """
-        if approval.capability_id and approval.capability_id != capability_id:
-            return True
-        if approval.resource and approval.resource != resource:
-            return True
-        if approval.action and approval.action != action:
-            return True
-        if approval.scope and approval.scope != scope:
-            return True
-        return bool(approval.args_hash and approval.args_hash != args_hash)
+        """Return True unless the approval matches this exact request context."""
+        return any((
+            approval.capability_id != capability_id,
+            approval.resource != resource,
+            approval.action != action,
+            approval.scope != scope,
+            approval.args_hash != args_hash,
+            approval.task_id != task_id,
+            approval.step_id != step_id,
+        ))
 
     # -- approvals -------------------------------------------------------
 
@@ -180,7 +184,7 @@ class PermissionGateway:
                     datetime.now(UTC) + timedelta(seconds=ttl_seconds)
                 ).isoformat()
             # If approved as persistent, create a grant.
-            if approval.persistent:
+            if approval.persistent and approval.task_id is None and approval.step_id is None:
                 grant = PermissionGrant(
                     capability_id=approval.capability_id,
                     action=approval.action,
@@ -269,9 +273,9 @@ class PermissionGateway:
             args_hash = hashlib.sha256(repr(sorted((args or {}).items())).encode()).hexdigest()
 
             # Read-only capabilities are allowed by default.
-            if idempotency == "read_only":
+            if idempotency == "read_only" and not scope:
                 grant = self._find_grant(
-                    capability_id, resource, action=effective_action, scope=scope
+                    capability_id, resource, action=effective_action, scope=scope, args=args
                 )
                 decision = PolicyDecision(
                     PermissionDecision.ALLOW,
@@ -291,7 +295,9 @@ class PermissionGateway:
                 return decision
 
             # Check grants.
-            grant = self._find_grant(capability_id, resource, action=effective_action, scope=scope)
+            grant = self._find_grant(
+                capability_id, resource, action=effective_action, scope=scope, args=args
+            )
             if grant is not None:
                 decision = PolicyDecision(
                     PermissionDecision.ALLOW,
@@ -321,8 +327,10 @@ class PermissionGateway:
                         ap.capability_id == capability_id
                         and ap.resource == resource
                         and ap.action == effective_action
-                        and (not ap.scope or ap.scope == scope)
-                        and (ap.args_hash == args_hash or ap.args_hash == "")
+                        and ap.scope == scope
+                        and ap.args_hash == args_hash
+                        and ap.task_id == task_id
+                        and ap.step_id == step_id
                         and ap.status is ApprovalStatus.APPROVED
                         and not ap.is_expired()
                     ):
@@ -341,6 +349,8 @@ class PermissionGateway:
                         action=effective_action,
                         scope=scope,
                         args_hash=args_hash,
+                        task_id=task_id,
+                        step_id=step_id,
                     )
                 ):
                     # One-time consumption.
