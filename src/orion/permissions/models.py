@@ -55,8 +55,11 @@ class PermissionGrant:
             return True
         now = now or datetime.now(UTC)
         try:
-            return datetime.fromisoformat(self.expires_at) > now
-        except ValueError:
+            expiry = datetime.fromisoformat(self.expires_at)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=UTC)
+            return expiry > now
+        except (TypeError, ValueError, OverflowError):
             return False
 
     def matches(
@@ -104,6 +107,8 @@ class PermissionGrant:
             elif normalised_grant != normalised_request:
                 return False
 
+        if not isinstance(self.constraints, dict):
+            return False
         request_args = args or {}
         for key, expected in self.constraints.items():
             if not isinstance(key, str) or not key:
@@ -158,8 +163,11 @@ class ApprovalRequest:
             return False
         now = now or datetime.now(UTC)
         try:
-            return datetime.fromisoformat(self.expires_at) <= now
-        except ValueError:
+            expiry = datetime.fromisoformat(self.expires_at)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=UTC)
+            return expiry <= now
+        except (TypeError, ValueError, OverflowError):
             return True
 
     def as_dict(self) -> dict[str, Any]:
