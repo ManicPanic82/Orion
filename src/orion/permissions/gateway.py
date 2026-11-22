@@ -128,9 +128,10 @@ class PermissionGateway:
         persistent: bool = False,
         one_time: bool = True,
     ) -> ApprovalRequest:
-        args_hash = hashlib.sha256(
-                json.dumps(args or {}, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-            ).hexdigest()
+        canonical_args = json.dumps(
+            args or {}, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        args_hash = hashlib.sha256(canonical_args).hexdigest()
         expires_at = None
         if ttl_seconds is not None:
             expires_at = (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat()
