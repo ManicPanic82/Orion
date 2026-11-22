@@ -34,3 +34,15 @@ def test_nested_project_inside_allowed_root_accepted(tmp_path) -> None:
     mgr = ProjectManager(allowed_roots=[str(tmp_path)])
     project = mgr.register_project("nested", str(root))
     assert project.root == str(root.resolve())
+
+
+
+def test_returned_project_cannot_change_registered_root(tmp_path) -> None:
+    allowed = tmp_path / "allowed"
+    outside = tmp_path / "outside"
+    allowed.mkdir()
+    outside.mkdir()
+    manager = ProjectManager(allowed_roots=[str(allowed)])
+    project = manager.register_project("safe", str(allowed))
+    project.root = str(outside)
+    assert manager.get(project.project_id).root == str(allowed.resolve())
