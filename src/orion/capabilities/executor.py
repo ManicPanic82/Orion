@@ -50,7 +50,7 @@ class CapabilityExecutor:
         # Only capabilities explicitly registered by application code as
         # READ_ONLY may bypass the gateway. The default classification is
         # NON_IDEMPOTENT, never read-only.
-        if idempotency != "read_only":
+        if idempotency != "read_only" or scope:
             gateway = self.permission_gateway
             if gateway is None:
                 return {
