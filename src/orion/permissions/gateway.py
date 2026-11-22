@@ -385,7 +385,10 @@ class PermissionGateway:
                     PermissionDecision.DENY,
                     rationale_code="approval_invalid",
                     approval_id=approval_id,
-                    details="approval not found, expired, not approved, or request binding mismatch",
+                    details=(
+                        "approval not found, expired, not approved, "
+                        "or request binding mismatch"
+                    ),
                 )
                 self._audit_decision(
                     capability_id,
