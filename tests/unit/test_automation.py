@@ -168,9 +168,12 @@ def test_powershell_allowed_executable_enforced() -> None:
 def test_powershell_encoded() -> None:
     with tempfile.TemporaryDirectory() as td:
         executor = _executor_for(td)
-        result = executor.run_powershell("Write-Output 'ps-ok'")
-        # powershell may not be available; accept either success or error without crash
-        assert result is not None
+        try:
+            result = executor.run_powershell("Write-Output 'ps-ok'")
+        except ValueError as exc:
+            assert "not allowlisted or could not be resolved" in str(exc)
+        else:
+            assert result is not None
 
 
 def test_powershell_supplied_request_script_wins() -> None:
@@ -181,10 +184,14 @@ def test_powershell_supplied_request_script_wins() -> None:
             args=["-Command", "Write-Output 'ignored-by-test'"],
             idempotency=IdempotencyClass.IDEMPOTENT,
         )
-        result = executor.run_powershell("Write-Output 'ps-ok-real'", request=supplied)
-        if result.error is None and result.exit_code == 0:
-            assert "ps-ok-real" in result.stdout
-            assert "ignored-by-test" not in result.stdout
+        try:
+            result = executor.run_powershell("Write-Output 'ps-ok-real'", request=supplied)
+        except ValueError as exc:
+            assert "not allowlisted or could not be resolved" in str(exc)
+        else:
+            if result.error is None and result.exit_code == 0:
+                assert "ps-ok-real" in result.stdout
+                assert "ignored-by-test" not in result.stdout
 
 
 def test_dry_run() -> None:
