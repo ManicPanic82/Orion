@@ -488,3 +488,46 @@ def test_returned_experience_snapshot_cannot_remove_privacy_controls() -> None:
     assert stored.privacy_state is PrivacyState.REDACTED
     assert stored.redacted_fields == ["request"]
     assert stored.metadata["request"] == "[REDACTED]"
+
+
+
+def test_capability_executor_checks_every_resource_argument() -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="write_files",
+            idempotency=IdempotencyClass.NON_IDEMPOTENT,
+            required_scopes=["files.write"],
+            handler=lambda payload, cancel_event=None: {"written": True},
+        )
+    )
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="write_files",
+            action="write_files",
+            resource="C:/Work/source.txt",
+            scope="files.write",
+        )
+    )
+    executor = CapabilityExecutor(registry, gateway)
+    step = TaskStep(
+        capability_id="write_files",
+        input={
+            "source": "C:/Work/source.txt",
+            "destination": "C:/Outside/destination.txt",
+        },
+    )
+    denied = executor.execute(step)
+    assert denied["success"] is False
+    assert denied["error_code"] == "permission_denied"
+
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="write_files",
+            action="write_files",
+            resource="C:/Outside/destination.txt",
+            scope="files.write",
+        )
+    )
+    assert executor.execute(step)["success"] is True
