@@ -400,3 +400,44 @@ def test_redacted_experience_export_masks_legacy_nested_feedback() -> None:
     assert "legacy-metadata-secret" not in exported
     assert experience.feedback[0].content == "legacy-feedback-secret"
     assert experience.metadata["nested"]["token"] == "legacy-metadata-secret"
+
+
+
+def test_returned_permission_objects_cannot_mutate_gateway_policy() -> None:
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    grant = gateway.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            action="write_file",
+            resource="/safe",
+            scope="project",
+        )
+    )
+    grant.resource = "*"
+    grant.capability_id = "*"
+    decision = gateway.decide(
+        "write_file",
+        "/outside",
+        scope="project",
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
+
+    approval = gateway.request_approval(
+        capability_id="delete_file",
+        resource="/safe",
+        task_id="task-1",
+        step_id="step-1",
+    )
+    approval.resource = "/outside"
+    approved = gateway.approve(approval.approval_id)
+    approved.resource = "/outside"
+    decision = gateway.decide(
+        "delete_file",
+        "/outside",
+        task_id="task-1",
+        step_id="step-1",
+        approval_id=approval.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
