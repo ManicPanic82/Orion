@@ -374,13 +374,15 @@ class PermissionGateway:
                     return decision
 
             # No grant/approval.
-            if approval_id is not None and approval is not None:
-                # An approval was explicitly supplied but invalid/expired.
+            if approval_id is not None:
+                # An explicitly supplied ID must resolve to a valid, matching
+                # approval. Missing IDs must never fall through to a weaker
+                # autonomy-mode decision.
                 decision = PolicyDecision(
                     PermissionDecision.DENY,
                     rationale_code="approval_invalid",
-                    approval_id=approval.approval_id,
-                    details="approval expired or not approved",
+                    approval_id=approval_id,
+                    details="approval not found, expired, not approved, or request binding mismatch",
                 )
                 self._audit_decision(
                     capability_id,
