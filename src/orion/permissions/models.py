@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+import ntpath
+import posixpath
 from typing import Any
 from uuid import uuid4
 
@@ -78,14 +80,28 @@ class PermissionGrant:
         if self.scope not in ("*", scope):
             return False
 
-        granted = self.resource.replace("\\", "/")
-        requested = resource.replace("\\", "/")
+        def normalise_path(value: str) -> tuple[str, str]:
+            # Normalise lexical traversal and case on Windows paths before
+            # applying a segment-boundary check. POSIX paths remain case-sensitive.
+            if ntpath.splitdrive(value)[0] or "\\" in value:
+                return ntpath.normcase(ntpath.normpath(value)), "\\"
+            return posixpath.normpath(value), "/"
+
+        granted = self.resource
+        requested = resource
         if granted != "*":
-            if granted.endswith("*"):
-                root = granted[:-1].rstrip("/")
-                if requested != root and not requested.startswith(root + "/"):
+            wildcard = granted.endswith("*")
+            if wildcard:
+                granted = granted[:-1].rstrip("/\\")
+            normalised_grant, separator = normalise_path(granted)
+            normalised_request, _ = normalise_path(requested)
+            if wildcard:
+                if (
+                    normalised_request != normalised_grant
+                    and not normalised_request.startswith(normalised_grant + separator)
+                ):
                     return False
-            elif granted != requested:
+            elif normalised_grant != normalised_request:
                 return False
 
         request_args = args or {}
