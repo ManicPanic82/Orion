@@ -71,16 +71,16 @@ class PermissionGrant:
         Resource wildcards are segment-aware. Constraints are exact argument
         predicates using dotted paths; malformed or unknown constraints fail closed.
         """
-        if self.capability_id and self.capability_id != capability_id:
+        if self.capability_id not in ("*", capability_id):
             return False
-        if self.action and self.action != action:
+        if self.action not in ("*", action):
             return False
-        if self.scope and self.scope != scope:
+        if self.scope not in ("*", scope):
             return False
 
         granted = self.resource.replace("\\", "/")
         requested = resource.replace("\\", "/")
-        if granted not in ("", "*"):
+        if granted != "*":
             if granted.endswith("*"):
                 root = granted[:-1].rstrip("/")
                 if requested != root and not requested.startswith(root + "/"):
