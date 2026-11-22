@@ -87,7 +87,7 @@ class CapabilityExecutor:
         # the operation is technically read-only. This prevents a sensitive
         # read from inheriting the unscoped read-only default.
         permission_idempotency = capability.idempotency.value
-        if capability.risk.value != "low":
+        if capability.risk.value != "low" or any(resources):
             permission_idempotency = "non_idempotent"
         needs_permission = permission_idempotency != "read_only" or any(scopes)
         if needs_permission:
