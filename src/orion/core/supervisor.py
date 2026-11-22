@@ -161,6 +161,10 @@ class CoreSupervisor:
             kill = getattr(child, "kill", None)
             if callable(kill):
                 kill()
+                try:
+                    child.wait(timeout=grace_seconds)
+                except (subprocess.TimeoutExpired, TypeError):
+                    pass
                 return
             raise RuntimeError("supervised child does not support terminate or kill")
         try:
@@ -180,5 +184,9 @@ class CoreSupervisor:
             if callable(kill):
                 try:
                     kill()
+                    try:
+                        child.wait(timeout=grace_seconds)
+                    except (subprocess.TimeoutExpired, TypeError):
+                        pass
                 except Exception:
                     pass
