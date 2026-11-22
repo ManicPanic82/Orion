@@ -384,7 +384,7 @@ def test_empty_grant_selectors_do_not_mean_global_access() -> None:
 def test_redacted_experience_export_masks_legacy_nested_feedback() -> None:
     experience = Experience(
         privacy_state=PrivacyState.REDACTED,
-        redacted_fields=["feedback.content"],
+        redacted_fields=["feedback.content", "actions.input.token", "metadata.token"],
         actions=[
             ExperienceAction(
                 capability_id="read_secret",
@@ -397,5 +397,6 @@ def test_redacted_experience_export_masks_legacy_nested_feedback() -> None:
     exported = json.dumps(experience.as_dict(redact=True), sort_keys=True)
     assert "legacy-action-secret" not in exported
     assert "legacy-feedback-secret" not in exported
-    assert "legacy-metadata-secret" in exported
+    assert "legacy-metadata-secret" not in exported
     assert experience.feedback[0].content == "legacy-feedback-secret"
+    assert experience.metadata["nested"]["token"] == "legacy-metadata-secret"
