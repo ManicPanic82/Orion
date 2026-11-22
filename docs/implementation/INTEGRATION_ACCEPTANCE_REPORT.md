@@ -198,6 +198,8 @@ repair pass. These changes are isolated on `security/follow-up-hardening`.
 | Finding | Follow-up change |
 |---|---|
 | Capability default was READ_ONLY | Capability and task-step defaults are now NON_IDEMPOTENT. The agent persists classification from the registered capability, never from planner output. |
+| Automation allowlists and executable resolution could be changed or hijacked | Workspace roots and executable allowlists are immutable snapshots; executables are pinned to absolute paths, revalidated before launch, and protected environment overrides are rejected. |
+| A workspace grant could authorize arbitrary process arguments | All non-read-only process execution requires an explicit global automation grant bound to executable, arguments, task/step, and resolved working directory. Only constrained Git status runs without a gateway. |
 | Capability metadata could be mutated after registration | Registry stores and returns isolated metadata snapshots while retaining trusted handler callables. |
 | A capability could reference multiple resources | Each capability must declare its resource fields (or an explicit global selector); undeclared resource-like inputs fail closed. Executor requires authorization for every resource/scope pair. Medium/high/critical risk reads also require gateway authorization. |
 | Resource grants could be escaped through path traversal or symlinks | Grant and approval paths are pinned to canonical targets at creation; matching checks segment boundaries and rejects lexical traversal and resolved symlink/junction escapes. |
@@ -216,7 +218,7 @@ repair pass. These changes are isolated on `security/follow-up-hardening`.
 | Training accepted unregistered or caller-mutated datasets | LearningManager accepts only its own registered dataset snapshots with a non-empty training split. |
 | Hardware inventory omitted GPUs and misreported OS/VRAM | Inventory reports Windows OS details, all detected adapters, and NVIDIA VRAM/driver/device identity via nvidia-smi where available. Capped WMI adapter memory is not presented as reliable VRAM. |
 
-Twenty-nine focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained four dataset/evaluation tests and `tests/unit/test_projects.py` gained one project-root snapshot test. Existing experience, permission, and automation tests were updated for snapshot and exact-grant semantics. In total, 34 additional regression tests are authored on this branch. The follow-up changes have not been
+Thirty-one focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained four dataset/evaluation tests and `tests/unit/test_projects.py` gained one project-root snapshot test. Existing experience, permission, and automation tests were updated for snapshot and exact-grant semantics. In total, 36 additional regression tests are authored on this branch. The follow-up changes have not been
 executed in the user's Windows environment from this audit session. The
 previous 281-passed/Ruff/smoke results apply to the earlier repair baseline,
 not this follow-up branch.
