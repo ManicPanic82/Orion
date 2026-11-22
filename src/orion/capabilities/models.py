@@ -33,7 +33,7 @@ class Capability:
     risk: RiskLevel = RiskLevel.LOW
     timeout_s: float = 30.0
     supports_cancellation: bool = True
-    idempotency: IdempotencyClass = IdempotencyClass.READ_ONLY
+    idempotency: IdempotencyClass = IdempotencyClass.NON_IDEMPOTENT
     handler: Callable[..., Any] | None = None
     available: bool = True
 
