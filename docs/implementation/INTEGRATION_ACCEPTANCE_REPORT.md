@@ -198,20 +198,22 @@ repair pass. These changes are isolated on `security/follow-up-hardening`.
 | Finding | Follow-up change |
 |---|---|
 | Capability default was READ_ONLY | Capability and task-step defaults are now NON_IDEMPOTENT. The agent persists classification from the registered capability, never from planner output. |
+| Capability metadata could be mutated after registration | Registry stores and returns isolated metadata snapshots while retaining trusted handler callables. |
+| A capability could reference multiple resources | Executor recursively collects all resource-bearing arguments and requires authorization for every resource/scope pair. Medium/high/critical risk reads also require gateway authorization. |
 | Required capability scopes were not enforced | CapabilityExecutor passes the actual resource, action, task/step, and every declared scope to the shared gateway. Scoped read-only operations require an exact grant/approval. |
 | Grant constraints were ignored | Grant constraints now match exact dotted argument paths; malformed or unknown constraints fail closed. |
-| Empty grant selectors acted as wildcards | Capability, action, scope, and resource selectors are exact by default. Wildcards must be explicit. Resource prefix wildcards are path-segment-aware. |
+| Empty grant selectors acted as wildcards | Capability, action, scope, and resource selectors are exact by default. Wildcards must be explicit. Resource matching normalizes traversal segments and uses path-segment boundaries. |
+| Returned policy objects could mutate gateway state | Grants, approvals, and audit records are copied at API boundaries; callers cannot widen stored policy by mutating returned objects. |
 | Approval resource/scope/task/step could be reused | Approvals now bind exact capability, action, resource, scope, canonical argument hash, task ID, and step ID. Unknown explicit approval IDs are denied. Task/step-specific persistent approvals do not create reusable grants. |
 | Planner could downgrade a step to READ_ONLY | Invalid planner classifications are rejected. Stored task classifications are reconciled from trusted registered capability metadata before execution. |
-| Restart could replay an ambiguous in-flight step | Any persisted RUNNING step is quarantined on recovery. The task is paused for explicit reconciliation and the agent refuses to execute it automatically. |
+| Restart could replay an ambiguous in-flight step | Any persisted RUNNING step is quarantined on recovery. The task is paused for explicit reconciliation and the agent refuses to execute it automatically. In-memory task repository reads/writes are isolated snapshots. |
 | Supervisor could block indefinitely during shutdown | The supervisor polls child processes, observes stop events, terminates children, escalates to kill after a grace period, and uses interruptible restart backoff. |
-| Nested feedback/action content escaped redaction | Redaction recursively scrubs nested mappings and covers feedback content/author and action payloads. |
+| Nested feedback/action content escaped redaction | Redaction recursively scrubs nested mappings and covers feedback content/author and action payloads. Experience records are isolated snapshots, serialization re-applies redaction, and later feedback remains scrubbed even if review state changes. |
 | Caller could forge a passing evaluation object | Caller-supplied pass/fail is rejected. Evaluations require a registered dataset, non-empty held-out split, matching checksum and exact held-out example count. Evaluation and dataset records are isolated from caller mutation; promotion accepts only a matching manager-issued evaluation. |
 | Task request IDs were not restored after restart | TaskManager rebuilds its request deduplication index from the durable repository. |
 | Hardware inventory omitted GPUs and misreported OS/VRAM | Inventory reports Windows OS details, all detected adapters, and NVIDIA VRAM/driver/device identity via nvidia-smi where available. Capped WMI adapter memory is not presented as reliable VRAM. |
 
-Regression coverage was added in `tests/unit/test_security_followup.py` and
-expanded in `tests/unit/test_learning.py`. The follow-up changes have not been
+Twenty-two focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained two additional evaluation-provenance tests, and existing experience/permission/automation tests were updated for snapshot and exact-grant semantics. The follow-up changes have not been
 executed in the user's Windows environment from this audit session. The
 previous 281-passed/Ruff/smoke results apply to the earlier repair baseline,
 not this follow-up branch.
