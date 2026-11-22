@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import threading
@@ -56,8 +57,9 @@ class PermissionGateway:
 
     def add_grant(self, grant: PermissionGrant) -> PermissionGrant:
         with self._lock:
-            self._grants[grant.grant_id] = grant
-            return grant
+            stored = copy.deepcopy(grant)
+            self._grants[stored.grant_id] = stored
+            return copy.deepcopy(stored)
 
     def revoke_grant(self, grant_id: str) -> bool:
         with self._lock:
@@ -69,7 +71,7 @@ class PermissionGateway:
 
     def list_grants(self) -> list[PermissionGrant]:
         with self._lock:
-            return list(self._grants.values())
+            return [copy.deepcopy(grant) for grant in self._grants.values()]
 
     def _find_grant(
         self,
@@ -150,7 +152,7 @@ class PermissionGateway:
             one_time=one_time,
         )
         with self._lock:
-            self._approvals[approval.approval_id] = approval
+            self._approvals[approval.approval_id] = copy.deepcopy(approval)
         self._audit_decision(
             capability_id=capability_id,
             action=action or capability_id,
@@ -161,7 +163,7 @@ class PermissionGateway:
             task_id=task_id,
             step_id=step_id,
         )
-        return approval
+        return copy.deepcopy(approval)
 
     def approve(
         self,
@@ -198,7 +200,7 @@ class PermissionGateway:
                     expires_at=approval.expires_at,
                 )
                 self._grants[grant.grant_id] = grant
-            return approval
+            return copy.deepcopy(approval)
 
     def deny(
         self, approval_id: str, *, approver: str = "user", rationale: str = "user_denied"
@@ -211,7 +213,7 @@ class PermissionGateway:
             approval.approver = approver
             approval.decided_at = datetime.now(UTC).isoformat()
             approval.rationale = rationale
-            return approval
+            return copy.deepcopy(approval)
 
     def revoke_approval(self, approval_id: str) -> bool:
         with self._lock:
@@ -222,14 +224,15 @@ class PermissionGateway:
             return True
 
     def get_approval(self, approval_id: str) -> ApprovalRequest:
-        approval = self._approvals.get(approval_id)
-        if approval is None:
-            raise KeyError(f"approval not found: {approval_id}")
-        return approval
+        with self._lock:
+            approval = self._approvals.get(approval_id)
+            if approval is None:
+                raise KeyError(f"approval not found: {approval_id}")
+            return copy.deepcopy(approval)
 
     def list_approvals(self) -> list[ApprovalRequest]:
         with self._lock:
-            return list(self._approvals.values())
+            return [copy.deepcopy(approval) for approval in self._approvals.values()]
 
     # -- decision --------------------------------------------------------
 
@@ -442,7 +445,7 @@ class PermissionGateway:
 
     def audit_trail(self) -> list[AuditRecord]:
         with self._lock:
-            return list(self._audit)
+            return copy.deepcopy(self._audit)
 
     def _audit_decision(
         self,
