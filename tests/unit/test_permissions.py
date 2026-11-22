@@ -287,3 +287,24 @@ def test_approval_with_empty_context_is_not_a_wildcard() -> None:
         idempotency="non_idempotent",
     )
     assert result.decision is PermissionDecision.DENY
+
+def test_approval_is_bound_to_exact_step() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    approval = gw.request_approval(
+        capability_id="write_file",
+        resource="/workspace/a.txt",
+        task_id="task-1",
+        step_id="step-1",
+        args={"path": "/workspace/a.txt"},
+    )
+    gw.approve(approval.approval_id)
+    wrong_step = gw.decide(
+        "write_file",
+        "/workspace/a.txt",
+        task_id="task-1",
+        step_id="step-2",
+        args={"path": "/workspace/a.txt"},
+        approval_id=approval.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert wrong_step.decision is PermissionDecision.DENY
