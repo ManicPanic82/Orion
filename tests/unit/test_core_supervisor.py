@@ -115,3 +115,58 @@ def test_supervise_child_exit_zero_is_clean() -> None:
 
     assert supervisor.supervise(spawn) == 0
     assert len(spawns) == 1
+
+def test_supervisor_terminates_running_child_when_stopped() -> None:
+    import time
+
+    class _BlockingChild:
+        def __init__(self) -> None:
+            self.finished = threading.Event()
+            self.terminated = threading.Event()
+
+        def wait(self) -> int:
+            self.finished.wait()
+            return 0
+
+        def poll(self):
+            return None if not self.finished.is_set() else 0
+
+        def terminate(self) -> None:
+            self.terminated.set()
+            self.finished.set()
+
+    child = _BlockingChild()
+    stop = threading.Event()
+    supervisor = CoreSupervisor()
+    result = []
+    worker = threading.Thread(
+        target=lambda: result.append(supervisor.supervise(lambda: child, stop_event=stop))
+    )
+    worker.start()
+    time.sleep(0.05)
+    stop.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert child.terminated.is_set()
+    assert result == [0]
+
+
+def test_supervisor_stop_interrupts_restart_backoff() -> None:
+    import time
+
+    stop = threading.Event()
+    supervisor = CoreSupervisor(
+        policy=RestartPolicy(max_restarts=3, initial_delay_s=5.0, max_delay_s=5.0)
+    )
+    result = []
+    worker = threading.Thread(
+        target=lambda: result.append(supervisor.supervise(lambda: _FakeChild(1), stop_event=stop))
+    )
+    worker.start()
+    deadline = time.monotonic() + 1.0
+    while supervisor.attempts < 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    stop.set()
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+    assert result == [0]
