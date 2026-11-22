@@ -52,8 +52,6 @@ class ResidentAgent:
         planned = steps if steps is not None else self.plan_objective(objective)
         task_steps: list[TaskStep] = []
         for i, ps in enumerate(planned):
-            from orion.tasks.models import TaskStep
-
             try:
                 IdempotencyClass(ps.idempotency)
             except (TypeError, ValueError) as exc:
