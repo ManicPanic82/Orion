@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import sqlite3
 import threading
@@ -37,15 +38,15 @@ class InMemoryTaskRepository:
         self._tasks: dict[str, Task] = {}
 
     def save(self, task: Task) -> None:
-        self._tasks[task.task_id] = task
+        self._tasks[task.task_id] = copy.deepcopy(task)
 
     def get(self, task_id: str) -> Task:
         if task_id not in self._tasks:
             raise KeyError(f"task not found: {task_id}")
-        return self._tasks[task_id]
+        return copy.deepcopy(self._tasks[task_id])
 
     def list(self) -> list[Task]:
-        return list(self._tasks.values())
+        return [copy.deepcopy(task) for task in self._tasks.values()]
 
     def delete(self, task_id: str) -> None:
         self._tasks.pop(task_id, None)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -102,18 +103,95 @@ class CoreSupervisor:
         requested stop; returns ``1`` when the restart budget is exhausted
         after repeated crashes.
         """
+        if stop_event is not None and stop_event.is_set():
+            return 0
+
         child = spawn()
-        while not (stop_event is not None and stop_event.is_set()):
-            try:
-                exit_code = child.wait()
-            except Exception as exc:  # child died hard: treat as crash
-                self.record_crash(reason=f"child_wait_failed: {exc}", exit_code=None)
-                exit_code = 1
-            if exit_code == 0 or (stop_event is not None and stop_event.is_set()):
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                self._stop_child(child)
                 return 0
-            self.record_crash(reason="child_exited", exit_code=exit_code)
+
+            crash_reason = "child_exited"
+            try:
+                poll = getattr(child, "poll", None)
+                if callable(poll):
+                    exit_code = poll()
+                    if exit_code is None:
+                        if stop_event is not None:
+                            stop_event.wait(0.05)
+                        else:
+                            time.sleep(0.05)
+                        continue
+                else:
+                    try:
+                        exit_code = child.wait(timeout=0.1)
+                    except TypeError as exc:
+                        if stop_event is not None:
+                            raise RuntimeError(
+                                "child must support poll() or wait(timeout=) "
+                                "for interruptible shutdown"
+                            ) from exc
+                        # Compatibility for simple synchronous test doubles.
+                        exit_code = child.wait()
+                    except subprocess.TimeoutExpired:
+                        continue
+            except Exception as exc:  # child died hard: treat as crash
+                crash_reason = f"child_wait_failed: {exc}"
+                exit_code = 1
+
+            if stop_event is not None and stop_event.is_set():
+                self._stop_child(child)
+                return 0
+            if exit_code == 0:
+                return 0
+
+            self.record_crash(reason=crash_reason, exit_code=exit_code)
             if not self.should_restart():
                 return 1
-            time.sleep(self.policy.backoff_s(self._attempts))
+
+            delay = self.policy.backoff_s(self._attempts)
+            if stop_event is not None:
+                if stop_event.wait(delay):
+                    return 0
+            else:
+                time.sleep(delay)
             child = spawn()
-        return 0
+
+    @staticmethod
+    def _stop_child(child: Any, *, grace_seconds: float = 2.0) -> None:
+        """Request graceful child shutdown, escalating to kill after a grace period."""
+        terminate = getattr(child, "terminate", None)
+        if not callable(terminate):
+            kill = getattr(child, "kill", None)
+            if callable(kill):
+                kill()
+                try:
+                    child.wait(timeout=grace_seconds)
+                except (subprocess.TimeoutExpired, TypeError):
+                    pass
+                return
+            raise RuntimeError("supervised child does not support terminate or kill")
+        try:
+            terminate()
+            try:
+                child.wait(timeout=grace_seconds)
+            except subprocess.TimeoutExpired:
+                kill = getattr(child, "kill", None)
+                if callable(kill):
+                    kill()
+                    child.wait(timeout=grace_seconds)
+            except TypeError:
+                child.wait()
+        except Exception:
+            # Shutdown is best-effort here; the supervisor's caller still exits.
+            kill = getattr(child, "kill", None)
+            if callable(kill):
+                try:
+                    kill()
+                    try:
+                        child.wait(timeout=grace_seconds)
+                    except (subprocess.TimeoutExpired, TypeError):
+                        pass
+                except Exception:
+                    pass

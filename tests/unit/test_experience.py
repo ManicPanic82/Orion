@@ -45,9 +45,10 @@ def test_failed_attempt_stays_failure_after_correction() -> None:
     assert exp.outcome is OutcomeClass.FAILURE
     recorder.add_feedback(exp.experience_id, "corrected approach")
     recorder.mark_corrected(exp.experience_id)
-    assert exp.outcome is OutcomeClass.CORRECTED
+    updated = recorder.get(exp.experience_id)
+    assert updated.outcome is OutcomeClass.CORRECTED
     # Original failure preserved in feedback, not overwritten silently
-    assert len(exp.feedback) == 1
+    assert len(updated.feedback) == 1
 
 
 def test_capture_pause_exclusion() -> None:
@@ -98,9 +99,9 @@ def test_eligibility_requires_review() -> None:
     assert exp.eligible_for_training is False
     recorder.review_privacy(exp.experience_id, PrivacyState.APPROVED)
     recorder.review_quality(exp.experience_id, QualityState.APPROVED)
-    assert exp.eligible_for_training is True
+    assert recorder.get(exp.experience_id).eligible_for_training is True
     recorder.exclude(exp.experience_id)
-    assert exp.eligible_for_training is False
+    assert recorder.get(exp.experience_id).eligible_for_training is False
 
 
 def test_sqlite_experience_store_roundtrip(tmp_path) -> None:

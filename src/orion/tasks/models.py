@@ -74,7 +74,7 @@ class TaskStep:
     capability_version: str = "1"
     input: dict[str, Any] = field(default_factory=dict)
     state: TaskStepState = TaskStepState.PENDING
-    idempotency: IdempotencyClass = IdempotencyClass.READ_ONLY
+    idempotency: IdempotencyClass = IdempotencyClass.NON_IDEMPOTENT
     permission_decision: str = "not_evaluated"
     started_at: str | None = None
     ended_at: str | None = None
@@ -116,7 +116,9 @@ class TaskStep:
             capability_version=data.get("capability_version", "1"),
             input=dict(data.get("input", {}) or {}),
             state=TaskStepState(data.get("state", TaskStepState.PENDING.value)),
-            idempotency=IdempotencyClass(data.get("idempotency", IdempotencyClass.READ_ONLY.value)),
+            idempotency=IdempotencyClass(
+                data.get("idempotency", IdempotencyClass.NON_IDEMPOTENT.value)
+            ),
             permission_decision=data.get("permission_decision", "not_evaluated"),
             started_at=data.get("started_at"),
             ended_at=data.get("ended_at"),

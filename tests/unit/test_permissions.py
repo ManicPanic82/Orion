@@ -27,7 +27,9 @@ def test_side_effect_requires_approval_in_supervised() -> None:
 
 def test_grant_allows() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    gw.add_grant(
+        PermissionGrant(capability_id="write_file", action="write_file", resource="/tmp/x")
+    )
     dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
     assert dec.decision is PermissionDecision.ALLOW
     assert dec.rationale_code == "grant_matched"
@@ -56,7 +58,7 @@ def test_wrong_scope_approval_not_matched() -> None:
 
 def test_emergency_pause_blocks() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    gw.add_grant(PermissionGrant(capability_id="write_file", action="write_file", resource="/tmp/x"))
     gw.pause()
     dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
     assert dec.decision is PermissionDecision.DENY
@@ -65,7 +67,9 @@ def test_emergency_pause_blocks() -> None:
 
 def test_revocation_takes_effect() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    grant = gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    grant = gw.add_grant(
+        PermissionGrant(capability_id="write_file", action="write_file", resource="/tmp/x")
+    )
     gw.revoke_grant(grant.grant_id)
     dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
     assert dec.decision is PermissionDecision.DENY
@@ -197,7 +201,14 @@ def test_grant_enforces_action_constraint() -> None:
 
 def test_grant_enforces_scope_constraint() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x", scope="global"))
+    gw.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            action="write_file",
+            resource="/tmp/x",
+            scope="global",
+        )
+    )
     dec_ok = gw.decide("write_file", "/tmp/x", scope="global", idempotency="non_idempotent")
     assert dec_ok.decision is PermissionDecision.ALLOW
     dec_bad = gw.decide("write_file", "/tmp/x", scope="project", idempotency="non_idempotent")

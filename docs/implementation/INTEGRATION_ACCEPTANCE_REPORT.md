@@ -2,15 +2,15 @@
 
 Orion — status of the security/integration repair cycle.
 
-- Reviewed branch: `phase-11-15-remaining` @ `8f427e7`.
+- Original repair baseline: `phase-11-15-remaining` @ `8f427e7`.
+- Follow-up hardening is recorded separately on `security/follow-up-hardening`; the original development branch and `main` remain unchanged.
 - Report written after the security and integration repair pass; see
   "Repair evidence" for the exact commands and results.
 
 ## Verdict
 
 Orion still is **not** the integrated Resident AI Workstation the roadmap
-intends. Subsystems are present and individually sound; they are not wired
-together. Do not treat the README's "Phases 1–15 present; all targeted phases
+intends. Subsystem foundations are present, but the follow-up audit found additional permission, recovery, privacy, and evaluation edge cases. Follow-up hardening changes are now committed on an isolated branch; Windows execution and validation are still pending. Do not treat the README's "Phases 1–15 present; all targeted phases
 implemented" claim as a product claim. The real milestone is: Orion starts with
 Windows, remains resident, loads its model, accepts an objective, plans and
 executes a task through its permission gateway, remembers the experience,
@@ -55,8 +55,7 @@ mandatory restrictions raise; supplied PowerShell script always wins.
   (`approval_invalid`). One-time consumption retained.
 - The auto-match loop now also requires action and scope equality and drops
   the empty-args-hash bypass.
-- `PermissionGrant.matches()` enforces `action` and `scope` when set on the
-  grant (resource matching already used `relative_to` semantics).
+- `PermissionGrant.matches()` requires exact capability/action/scope/resource selectors by default; wildcard selectors must be explicit, constraints are enforced, and path wildcards are segment-aware.
 
 Acceptance (tests): 7 tests in `tests/unit/test_permissions.py`
 (`test_approval_binding_rejects_wrong_*`, `test_approval_binding_accepts_matching_request`,
@@ -109,7 +108,7 @@ Acceptance (tests): 8 tests in `tests/unit/test_learning.py`.
 |---|---|---|
 | ProjectManager root validation used `str.startswith` (sibling prefix accepted) | `root_path.is_relative_to(...)` in `src/orion/projects/manager.py` | 3 in `tests/unit/test_projects.py` (incl. `proj2` vs allowed root `proj`) |
 | Dataset split took the first N records | Seeded shuffle (`_split_ids`, seed from version + content); eval/train disjoint and covering | `test_dataset_split_is_reproducible` |
-| Hardware inventory: CPU "unknown", RAM 0, GPU name = `platform.processor()` | Real PowerShell queries: `Win32_Processor`, `Win32_ComputerSystem.TotalPhysicalMemory`, `Win32_VideoController` with vendor detection; graceful fallback | `test_inventory_collects_real_values_when_queries_succeed`, `test_inventory_falls_back_when_queries_return_nothing` |
+| Hardware inventory: CPU "unknown", RAM 0, GPU name = `platform.processor()` | PowerShell queries for CPU, RAM, Windows OS and all display adapters; NVIDIA VRAM/driver/device data uses `nvidia-smi` where available; WMI's 32-bit AdapterRAM cap is not treated as reliable VRAM | `test_inventory_collects_real_values_when_queries_succeed`, `test_inventory_falls_back_when_queries_return_nothing` |
 | PowerShell executor: supplied request could ignore the script | See #1 (script always runs) | `test_powershell_supplied_request_script_wins` |
 | Phase integration: capability executor vs. real permission gateway — incompatible interfaces and two `PermissionDecision` enums | `src/orion/capabilities/permissions.py` now aliases the real enum/contract (`decide(...) -> PolicyDecision`); `CapabilityExecutor` calls the real gateway signature (`idempotency`, `step_id`, `args`) and checks `decision.decision`; `MockPermissionGateway` returns a labelled mock `PolicyDecision(ALLOW)` | existing `test_capabilities.py`, `test_agent_tasks.py` — Agent now uses manager APIs (`update_task`/`update_step`) |
 | Task repository in-memory | New `SQLiteTaskRepository` (durable, migrations pattern); `TaskManager` durable by default (`db_path` overridable) | `tests/unit/test_task_repository.py`: roundtrip, restart survival, delete |
@@ -157,9 +156,11 @@ task engine, memory + experience capture, learning gate, shutdown/recovery).
 .\.venv\Scripts\python.exe scripts\smoke_launch.py   # executed; see validation log below
 ```
 
-Git facts:
-- Branch `main` untouched; branch `phase-11-15-remaining` at `8f427e7` preserved.
-- No pushes, no merges, no branch changes.
+Git facts (historical and current):
+- The original branch `phase-11-15-remaining` was preserved.
+- Follow-up changes were pushed to the isolated branch `security/follow-up-hardening`.
+- `main` was not changed and no merge or pull request was created.
+- The earlier statement "No pushes, no merges, no branch changes" described the original repair pass only and is superseded by this follow-up.
 
 ## Known limitations and unimplemented items
 
@@ -187,3 +188,51 @@ Git facts:
   durability.
 - Scope: full UI↔Core integration and end-to-end acceptance tests are
   deliberately deferred to a dedicated integration pass.
+
+
+## Security follow-up hardening
+
+The follow-up audit identified additional edge cases after the original 281-test
+repair pass. These changes are isolated on `security/follow-up-hardening`.
+
+| Finding | Follow-up change |
+|---|---|
+| Capability default was READ_ONLY | Capability and task-step defaults are now NON_IDEMPOTENT. The agent persists classification from the registered capability, never from planner output. |
+| Automation allowlists and executable resolution could be changed or hijacked | Workspace roots and executable allowlists are immutable snapshots; executables are pinned to absolute paths, revalidated before launch, and protected environment overrides are rejected. |
+| A workspace grant could authorize arbitrary process arguments | All non-read-only process execution requires an explicit global automation grant bound to executable, arguments, task/step, and resolved working directory. Only constrained Git status runs without a gateway. |
+| Capability metadata could be mutated after registration | Registry stores and returns isolated metadata snapshots while retaining trusted handler callables. |
+| A capability could reference multiple resources | Each capability must declare its resource fields (or an explicit global selector); undeclared resource-like inputs fail closed. Executor requires authorization for every resource/scope pair. Medium/high/critical risk reads also require gateway authorization. |
+| Resource grants could be escaped through path traversal or symlinks | Grant and approval paths are pinned to canonical targets at creation; matching checks segment boundaries and rejects lexical traversal and resolved symlink/junction escapes. |
+| Required capability scopes were not enforced | CapabilityExecutor passes the actual resource, action, task/step, and every declared scope to the shared gateway. Scoped read-only operations require an exact grant/approval. |
+| Grant constraints were ignored | Grant constraints now match exact dotted argument paths; malformed or unknown constraints fail closed. |
+| Empty grant selectors acted as wildcards | Capability, action, scope, and resource selectors are exact by default. Wildcards must be explicit. Resource matching normalizes traversal segments and uses path-segment boundaries. |
+| Returned policy objects could mutate gateway state | Grants, approvals, and audit records are copied at API boundaries; callers cannot widen stored policy by mutating returned objects. |
+| Approval resource/scope/task/step could be reused | Approvals now bind exact capability, action, resource, scope, canonical argument hash, task ID, and step ID. Unknown explicit approval IDs are denied. Task/step-specific persistent approvals do not create reusable grants. |
+| Planner could downgrade a step to READ_ONLY | Invalid planner classifications are rejected. Stored task classifications are reconciled from trusted registered capability metadata before execution. |
+| Restart could replay an ambiguous in-flight step | Any persisted RUNNING step is quarantined on recovery. The task is paused for explicit reconciliation and the agent refuses to execute it automatically. In-memory task repository reads/writes are isolated snapshots. |
+| Supervisor could block indefinitely during shutdown | The supervisor polls child processes, observes stop events, terminates children, escalates to kill after a grace period, and uses interruptible restart backoff. |
+| Nested feedback/action content escaped redaction | Redaction recursively scrubs nested mappings and covers feedback content/author and action payloads. Experience records are isolated snapshots, serialization re-applies redaction, and later feedback remains scrubbed even if review state changes. |
+| Caller could forge a passing evaluation object | Caller-supplied pass/fail is rejected. Evaluations require a registered dataset, non-empty held-out split, matching checksum and exact held-out example count. Evaluation and dataset records are isolated from caller mutation; promotion accepts only a matching manager-issued evaluation. |
+| Task request IDs were not restored after restart | TaskManager rebuilds its request deduplication index from the durable repository. |
+| Project records could be mutated after root validation | ProjectManager stores and returns snapshots and revalidates the canonical project root before inspection or test execution. |
+| Training accepted unregistered or caller-mutated datasets | LearningManager accepts only its own registered dataset snapshots with a non-empty training split. |
+| Hardware inventory omitted GPUs and misreported OS/VRAM | Inventory reports Windows OS details, all detected adapters, and NVIDIA VRAM/driver/device identity via nvidia-smi where available. Capped WMI adapter memory is not presented as reliable VRAM. |
+
+Thirty focused regression tests were added in `tests/unit/test_security_followup.py`; `tests/unit/test_learning.py` gained four dataset/evaluation tests and `tests/unit/test_projects.py` gained one project-root snapshot test. Existing experience, permission, and automation tests were updated for snapshot and exact-grant semantics. In total, 35 additional regression tests are authored on this branch. The follow-up changes have not been
+executed in the user's Windows environment from this audit session. The
+previous 281-passed/Ruff/smoke results apply to the earlier repair baseline,
+not this follow-up branch.
+
+Required local acceptance on Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m compileall -q src tests scripts
+.\.venv\Scripts\python.exe scripts\smoke_launch.py --offscreen
+```
+
+A passing local run is required before treating this follow-up as validated.
+The held-out evaluation API now verifies dataset identity and split metadata,
+but a real model evaluator that independently computes metrics against that
+split remains part of the future model/learning integration milestone.

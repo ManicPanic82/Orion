@@ -2,10 +2,39 @@
 
 from __future__ import annotations
 
-from orion.experience import ExperienceRecorder, OutcomeClass, PrivacyState, QualityState
+import pytest
+
+from orion.experience import (
+    Experience,
+    ExperienceAction,
+    ExperienceRecorder,
+    OutcomeClass,
+    PrivacyState,
+    QualityState,
+)
 from orion.learning import LearningManager, build_dataset
 from orion.learning.models import EvaluationResult
 from orion.models import ModelProfile
+
+
+def _held_out_metrics(manager: LearningManager, accuracy: float, **extra):
+    recorder, _ = _eligible_experience()
+    second = recorder.capture_experience(
+        objective_id="second-objective",
+        task_id="second-task",
+        outcome=OutcomeClass.SUCCESS,
+    )
+    recorder.review_privacy(second.experience_id, PrivacyState.APPROVED)
+    recorder.review_quality(second.experience_id, QualityState.APPROVED)
+    dataset = manager.build_dataset(recorder.list_experiences())
+    return {
+        "accuracy": accuracy,
+        "held_out": True,
+        "dataset_id": dataset.dataset_id,
+        "eval_dataset_checksum": dataset.checksum,
+        "eval_examples": len(dataset.eval_ids),
+        **extra,
+    }
 
 
 def _eligible_experience():
@@ -73,8 +102,15 @@ def test_dataset_immutable_version() -> None:
 
 def test_mock_trainer_lifecycle() -> None:
     rec, _ = _eligible_experience()
-    dataset = build_dataset(rec.list_experiences())
+    second = rec.capture_experience(
+        objective_id="second-objective",
+        task_id="second-task",
+        outcome=OutcomeClass.SUCCESS,
+    )
+    rec.review_privacy(second.experience_id, PrivacyState.APPROVED)
+    rec.review_quality(second.experience_id, QualityState.APPROVED)
     lm = LearningManager()
+    dataset = lm.build_dataset(rec.list_experiences())
     run = lm.submit_training(dataset, base_model_revision="rev1")
     assert run.status.value == "completed"
     assert run.output_path.startswith("mock://")
@@ -83,7 +119,7 @@ def test_mock_trainer_lifecycle() -> None:
 
 def test_candidate_evaluation_records_metrics() -> None:
     lm = LearningManager()
-    ev = lm.evaluate_candidate("cand1", metrics={"accuracy": 0.9})
+    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(lm, 0.9))
     assert ev.passed is True
     assert ev.metrics["accuracy"] == 0.9
 
@@ -100,13 +136,13 @@ def test_evaluate_candidate_without_accuracy_metric_rejected() -> None:
 
 def test_evaluate_candidate_low_accuracy_fails() -> None:
     lm = LearningManager()
-    ev = lm.evaluate_candidate("cand1", metrics={"accuracy": 0.5})
+    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(lm, 0.5))
     assert ev.passed is False
 
 
 def test_evaluate_candidate_regression_fails() -> None:
     lm = LearningManager()
-    ev = lm.evaluate_candidate("cand1", metrics={"accuracy": 0.95, "regression": False})
+    ev = lm.evaluate_candidate("cand1", metrics=_held_out_metrics(lm, 0.95, regression=False))
     assert ev.passed is False
 
 
@@ -124,7 +160,7 @@ def test_promotion_requires_evaluation() -> None:
 def test_promotion_requires_candidate_bound_evaluation() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("other", metrics={"accuracy": 0.9})
+    ev = lm.evaluate_candidate("other", metrics=_held_out_metrics(lm, 0.9))
     try:
         lm.promote_candidate(profile, evaluation=ev, approved=True)
     except ValueError:
@@ -136,7 +172,7 @@ def test_promotion_requires_candidate_bound_evaluation() -> None:
 def test_promotion_requires_passed_evaluation() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("cand", metrics={"accuracy": 0.5})
+    ev = lm.evaluate_candidate("cand", metrics=_held_out_metrics(lm, 0.5))
     try:
         lm.promote_candidate(profile, evaluation=ev, approved=True)
     except ValueError:
@@ -171,7 +207,7 @@ def test_promotion_denied_without_approval() -> None:
 def test_promotion_approved() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("cand", metrics={"accuracy": 0.9})
+    ev = lm.evaluate_candidate("cand", metrics=_held_out_metrics(lm, 0.9))
     record = lm.promote_candidate(profile, evaluation=ev, approved=True, approver="user")
     assert record.status.value == "approved"
 
@@ -179,7 +215,7 @@ def test_promotion_approved() -> None:
 def test_rollback_restores_metadata() -> None:
     lm = LearningManager()
     profile = ModelProfile(profile_id="cand", base_model="mock-base")
-    ev = lm.evaluate_candidate("cand", metrics={"accuracy": 0.9})
+    ev = lm.evaluate_candidate("cand", metrics=_held_out_metrics(lm, 0.9))
     record = lm.promote_candidate(profile, evaluation=ev, approved=True, previous_profile_id="prev")
     rolled = lm.rollback(record.promotion_id)
     assert rolled.status.value == "rolled_back"
@@ -200,3 +236,63 @@ def test_redacted_experience_does_not_leak_into_dataset() -> None:
     blob = dataset.to_jsonl()
     assert "secret-request" not in blob
     assert "secret-summary" not in blob
+
+
+
+def test_evaluation_cannot_be_mutated_after_issuance() -> None:
+    lm = LearningManager()
+    evaluation = lm.evaluate_candidate("cand", metrics=_held_out_metrics(lm, 0.99))
+    evaluation.metrics["eval_examples"] = 999
+    profile = ModelProfile(profile_id="cand", base_model="mock-base")
+    with pytest.raises(ValueError, match="issued by this LearningManager"):
+        lm.promote_candidate(profile, evaluation=evaluation, approved=True)
+
+
+def test_evaluation_requires_a_registered_held_out_dataset() -> None:
+    lm = LearningManager()
+    metrics = {
+        "accuracy": 0.99,
+        "held_out": True,
+        "dataset_id": "not-registered",
+        "eval_dataset_checksum": "fake-checksum",
+        "eval_examples": 10,
+    }
+    with pytest.raises(ValueError, match="registered dataset"):
+        lm.evaluate_candidate("cand", metrics=metrics)
+
+
+
+def test_training_rejects_unregistered_or_mutated_dataset() -> None:
+    recorder, _ = _eligible_experience()
+    second = recorder.capture_experience(
+        objective_id="second-objective",
+        task_id="second-task",
+        outcome=OutcomeClass.SUCCESS,
+    )
+    recorder.review_privacy(second.experience_id, PrivacyState.APPROVED)
+    recorder.review_quality(second.experience_id, QualityState.APPROVED)
+    manager = LearningManager()
+    unregistered = build_dataset(recorder.list_experiences())
+    with pytest.raises(ValueError, match="built and registered"):
+        manager.submit_training(unregistered)
+
+    registered = manager.build_dataset(recorder.list_experiences())
+    registered.examples[0].input["objective"] = "tampered"
+    with pytest.raises(ValueError, match="built and registered"):
+        manager.submit_training(registered)
+
+
+
+def test_dataset_builder_honours_nested_legacy_redaction_paths() -> None:
+    legacy = Experience(
+        outcome=OutcomeClass.SUCCESS,
+        privacy_state=PrivacyState.APPROVED,
+        quality_state=QualityState.APPROVED,
+        redacted_fields=["metadata.request", "actions.capability_id"],
+        metadata={"request": "legacy-private-request"},
+        actions=[ExperienceAction(capability_id="legacy-private-capability")],
+    )
+    dataset = build_dataset([legacy])
+    blob = dataset.to_jsonl()
+    assert "legacy-private-request" not in blob
+    assert "legacy-private-capability" not in blob

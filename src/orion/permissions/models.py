@@ -2,13 +2,50 @@
 
 from __future__ import annotations
 
+import ntpath
+import os
+import posixpath
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 POLICY_VERSION = "1.0"
+
+
+def _normalise_resource_path(value: str, *, resolve: bool = True) -> tuple[str, str]:
+    if "://" in value:
+        return posixpath.normpath(value), "/"
+    is_windows_path = bool(ntpath.splitdrive(value)[0]) or "\\" in value
+    if is_windows_path and os.name != "nt":
+        return ntpath.normcase(ntpath.normpath(value)), "\\"
+    if resolve:
+        try:
+            value = str(Path(value).resolve(strict=False))
+        except (OSError, RuntimeError):
+            pass
+    if ntpath.splitdrive(value)[0] or "\\" in value:
+        return ntpath.normcase(ntpath.normpath(value)), "\\"
+    return posixpath.normpath(value), "/"
+
+
+def canonicalize_resource(value: str) -> str:
+    """Pin a grant/approval resource to its canonical path at creation time."""
+    if value == "*":
+        return value
+    wildcard = value.endswith("*")
+    root = value[:-1].rstrip("/\\") if wildcard else value
+    if wildcard and not root:
+        return "/*"
+    drive, tail = ntpath.splitdrive(root)
+    if wildcard and drive and not tail:
+        root = drive + "\\"
+    normalised, separator = _normalise_resource_path(root)
+    if wildcard:
+        return normalised.rstrip("/\\") + separator + "*"
+    return normalised
 
 
 class AutonomyMode(StrEnum):
@@ -45,6 +82,7 @@ class PermissionGrant:
     revoked: bool = False
     constraints: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    resource_is_canonical: bool = False
 
     def is_active(self, now: datetime | None = None) -> bool:
         if self.revoked:
@@ -53,25 +91,67 @@ class PermissionGrant:
             return True
         now = now or datetime.now(UTC)
         try:
-            return datetime.fromisoformat(self.expires_at) > now
-        except ValueError:
+            expiry = datetime.fromisoformat(self.expires_at)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=UTC)
+            return expiry > now
+        except (TypeError, ValueError, OverflowError):
             return False
 
     def matches(
-        self, capability_id: str, resource: str, *, action: str = "", scope: str = ""
+        self,
+        capability_id: str,
+        resource: str,
+        *,
+        action: str = "",
+        scope: str = "",
+        args: dict[str, Any] | None = None,
     ) -> bool:
-        if self.capability_id and self.capability_id != capability_id:
+        """Match a grant against the complete request context.
+
+        Resource wildcards are segment-aware. Constraints are exact argument
+        predicates using dotted paths; malformed or unknown constraints fail closed.
+        """
+        if self.capability_id not in ("*", capability_id):
             return False
-        if self.resource and self.resource not in ("*", ""):
-            if self.resource.endswith("*"):
-                if not resource.startswith(self.resource[:-1]):
+        if self.action not in ("*", action):
+            return False
+        if self.scope not in ("*", scope):
+            return False
+
+        granted = self.resource
+        requested = resource
+        if granted != "*":
+            wildcard = granted.endswith("*")
+            if wildcard:
+                granted = granted[:-1].rstrip("/\\")
+            normalised_grant, separator = _normalise_resource_path(
+                granted, resolve=not self.resource_is_canonical
+            )
+            normalised_request, _ = _normalise_resource_path(requested)
+            if wildcard:
+                if (
+                    normalised_request != normalised_grant
+                    and not normalised_request.startswith(normalised_grant + separator)
+                ):
                     return False
-            elif self.resource != resource:
+            elif normalised_grant != normalised_request:
                 return False
-        # Grants store action and scope; enforce both when set.
-        if self.action and self.action != action:
+
+        if not isinstance(self.constraints, dict):
             return False
-        return not (self.scope and self.scope != scope)
+        request_args = args or {}
+        for key, expected in self.constraints.items():
+            if not isinstance(key, str) or not key:
+                return False
+            current: Any = request_args
+            for part in key.split("."):
+                if not isinstance(current, dict) or part not in current:
+                    return False
+                current = current[part]
+            if current != expected:
+                return False
+        return True
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +159,7 @@ class PermissionGrant:
             "capability_id": self.capability_id,
             "action": self.action,
             "resource": self.resource,
+            "resource_is_canonical": self.resource_is_canonical,
             "scope": self.scope,
             "persistent": self.persistent,
             "expires_at": self.expires_at,
@@ -114,8 +195,11 @@ class ApprovalRequest:
             return False
         now = now or datetime.now(UTC)
         try:
-            return datetime.fromisoformat(self.expires_at) <= now
-        except ValueError:
+            expiry = datetime.fromisoformat(self.expires_at)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=UTC)
+            return expiry <= now
+        except (TypeError, ValueError, OverflowError):
             return True
 
     def as_dict(self) -> dict[str, Any]:

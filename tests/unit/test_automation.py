@@ -13,7 +13,13 @@ from orion.permissions import AutonomyMode, PermissionGateway, PermissionGrant
 def _executor_for(td: str, **kwargs: object) -> AutomationExecutor:
     """Executor with mandatory restrictions + an allowing gateway."""
     gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gateway.add_grant(PermissionGrant(capability_id="automation.execute", resource=""))
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="automation.execute",
+            action="automation.execute",
+            resource="*",
+        )
+    )
     return AutomationExecutor(
         approved_roots=[td],
         allowed_executables={sys.executable, "git.exe", "git", "powershell.exe"},
@@ -142,6 +148,8 @@ def test_deterministic_read_only_classification() -> None:
     assert classify_request(req) is IdempotencyClass.READ_ONLY
     req.args = ["push"]
     assert classify_request(req) is IdempotencyClass.NON_IDEMPOTENT
+    req.args = ["log"]
+    assert classify_request(req) is IdempotencyClass.NON_IDEMPOTENT
     # Non-allowlisted commands are never classified read-only.
     req.executable = "powershell.exe"
     req.args = ["-Command", "Get-Date"]
@@ -162,9 +170,12 @@ def test_powershell_allowed_executable_enforced() -> None:
 def test_powershell_encoded() -> None:
     with tempfile.TemporaryDirectory() as td:
         executor = _executor_for(td)
-        result = executor.run_powershell("Write-Output 'ps-ok'")
-        # powershell may not be available; accept either success or error without crash
-        assert result is not None
+        try:
+            result = executor.run_powershell("Write-Output 'ps-ok'")
+        except ValueError as exc:
+            assert "not allowlisted or could not be resolved" in str(exc)
+        else:
+            assert result is not None
 
 
 def test_powershell_supplied_request_script_wins() -> None:
@@ -175,10 +186,14 @@ def test_powershell_supplied_request_script_wins() -> None:
             args=["-Command", "Write-Output 'ignored-by-test'"],
             idempotency=IdempotencyClass.IDEMPOTENT,
         )
-        result = executor.run_powershell("Write-Output 'ps-ok-real'", request=supplied)
-        if result.error is None and result.exit_code == 0:
-            assert "ps-ok-real" in result.stdout
-            assert "ignored-by-test" not in result.stdout
+        try:
+            result = executor.run_powershell("Write-Output 'ps-ok-real'", request=supplied)
+        except ValueError as exc:
+            assert "not allowlisted or could not be resolved" in str(exc)
+        else:
+            if result.error is None and result.exit_code == 0:
+                assert "ps-ok-real" in result.stdout
+                assert "ignored-by-test" not in result.stdout
 
 
 def test_dry_run() -> None:

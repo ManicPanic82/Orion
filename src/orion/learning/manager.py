@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import datetime
+import math
 import threading
 from typing import Any
 
@@ -38,18 +40,18 @@ class LearningManager:
     def build_dataset(self, experiences: list[Experience], **kwargs: Any) -> DatasetVersion:
         dataset = build_dataset(experiences, **kwargs)
         with self._lock:
-            self._datasets[dataset.dataset_id] = dataset
+            self._datasets[dataset.dataset_id] = copy.deepcopy(dataset)
         return dataset
 
     def get_dataset(self, dataset_id: str) -> DatasetVersion:
         with self._lock:
             if dataset_id not in self._datasets:
                 raise KeyError(f"dataset not found: {dataset_id}")
-            return self._datasets[dataset_id]
+            return copy.deepcopy(self._datasets[dataset_id])
 
     def list_datasets(self) -> list[DatasetVersion]:
         with self._lock:
-            return list(self._datasets.values())
+            return [copy.deepcopy(dataset) for dataset in self._datasets.values()]
 
     # -- training --------------------------------------------------------
 
@@ -60,6 +62,14 @@ class LearningManager:
         base_model_revision: str = "",
         config: dict[str, Any] | None = None,
     ) -> TrainingRun:
+        with self._lock:
+            registered = self._datasets.get(dataset.dataset_id)
+        if registered is None or registered != dataset:
+            raise ValueError(
+                "training requires a dataset built and registered by this LearningManager"
+            )
+        if not dataset.train_ids:
+            raise ValueError("training dataset must contain at least one training example")
         run = TrainingRun(
             dataset_id=dataset.dataset_id,
             dataset_version=dataset.version,
@@ -92,15 +102,33 @@ class LearningManager:
         passed: bool | None = None,
     ) -> EvaluationResult:
         metrics = dict(metrics or {})
-        if passed is None:
-            # Mandatory, evidence-based certification: an evaluation without
-            # an accuracy metric cannot pass on its own.
-            acc = metrics.get("accuracy")
-            if acc is None:
-                raise ValueError(
-                    "evaluation requires an accuracy metric or an explicit passed result"
-                )
-            passed = bool(acc >= 0.8)
+        if passed is not None:
+            raise ValueError(
+                "passed is evaluator output, not caller input; omit it and provide held-out metrics"
+            )
+        accuracy = metrics.get("accuracy")
+        if (
+            isinstance(accuracy, bool)
+            or not isinstance(accuracy, (int, float))
+            or not math.isfinite(accuracy)
+            or not 0.0 <= accuracy <= 1.0
+        ):
+            raise ValueError("evaluation requires a finite accuracy metric between 0 and 1")
+        if metrics.get("held_out") is not True:
+            raise ValueError("evaluation must identify a held-out dataset")
+        dataset_id = metrics.get("dataset_id")
+        with self._lock:
+            dataset = self._datasets.get(dataset_id) if isinstance(dataset_id, str) else None
+        if dataset is None or not dataset.eval_ids or not dataset.train_ids:
+            raise ValueError("evaluation must reference a registered dataset with an eval split")
+        if metrics.get("eval_dataset_checksum") != dataset.checksum:
+            raise ValueError("evaluation dataset checksum does not match the registered dataset")
+        evaluated_examples = metrics.get("eval_examples")
+        if isinstance(evaluated_examples, bool) or not isinstance(evaluated_examples, int):
+            raise ValueError("evaluation example count must be an integer")
+        if evaluated_examples != len(dataset.eval_ids):
+            raise ValueError("evaluation example count does not match the held-out split")
+        passed = bool(accuracy >= 0.8)
         if metrics.get("regression") is False:
             # Regression checks: a known regression fails the candidate.
             passed = False
@@ -112,14 +140,14 @@ class LearningManager:
             details="evaluation completed",
         )
         with self._lock:
-            self._evaluations[ev.evaluation_id] = ev
+            self._evaluations[ev.evaluation_id] = copy.deepcopy(ev)
         return ev
 
     def get_evaluation(self, evaluation_id: str) -> EvaluationResult:
         with self._lock:
             if evaluation_id not in self._evaluations:
                 raise KeyError(f"evaluation not found: {evaluation_id}")
-            return self._evaluations[evaluation_id]
+            return copy.deepcopy(self._evaluations[evaluation_id])
 
     # -- promotion -------------------------------------------------------
 
@@ -138,11 +166,41 @@ class LearningManager:
         # Mandatory, candidate-specific held-out evaluation before promotion.
         if evaluation is None:
             raise ValueError("promotion requires a held-out evaluation result")
-        if not evaluation.metrics:
-            raise ValueError("evaluation must record metrics")
+        with self._lock:
+            registered = self._evaluations.get(evaluation.evaluation_id)
+        if registered is None or registered != evaluation:
+            raise ValueError("promotion requires an evaluation issued by this LearningManager")
+        metrics = evaluation.metrics
+        dataset_id = metrics.get("dataset_id")
+        with self._lock:
+            dataset = self._datasets.get(dataset_id) if isinstance(dataset_id, str) else None
+        if (
+            dataset is None
+            or not dataset.eval_ids
+            or not dataset.train_ids
+            or metrics.get("held_out") is not True
+            or metrics.get("eval_dataset_checksum") != dataset.checksum
+        ):
+            raise ValueError("evaluation lacks registered held-out dataset provenance")
+        evaluated_examples = metrics.get("eval_examples")
+        accuracy_value = metrics.get("accuracy")
+        if (
+            isinstance(evaluated_examples, bool)
+            or not isinstance(evaluated_examples, int)
+            or isinstance(accuracy_value, bool)
+            or not isinstance(accuracy_value, (int, float))
+        ):
+            raise ValueError("evaluation metrics are incomplete or invalid")
+        accuracy = float(accuracy_value)
+        if (
+            evaluated_examples != len(dataset.eval_ids)
+            or not math.isfinite(accuracy)
+            or not 0 <= accuracy <= 1
+        ):
+            raise ValueError("evaluation metrics are incomplete or invalid")
         if evaluation.candidate_profile_id != candidate_id:
             raise ValueError("evaluation does not belong to the candidate being promoted")
-        if not evaluation.passed:
+        if not evaluation.passed or accuracy < 0.8 or metrics.get("regression") is False:
             raise ValueError("candidate failed evaluation")
         record = PromotionRecord(
             candidate_profile_id=candidate_id,

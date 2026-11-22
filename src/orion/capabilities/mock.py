@@ -76,5 +76,6 @@ def register_mock_capabilities(registry: Any) -> None:
             idempotency=IdempotencyClass.NON_IDEMPOTENT,
             risk=RiskLevel.HIGH,
             required_scopes=["files.write"],
+            resource_fields=["path"],
         )
     )
