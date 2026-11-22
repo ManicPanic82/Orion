@@ -95,8 +95,15 @@ def test_dataset_immutable_version() -> None:
 
 def test_mock_trainer_lifecycle() -> None:
     rec, _ = _eligible_experience()
-    dataset = build_dataset(rec.list_experiences())
+    second = rec.capture_experience(
+        objective_id="second-objective",
+        task_id="second-task",
+        outcome=OutcomeClass.SUCCESS,
+    )
+    rec.review_privacy(second.experience_id, PrivacyState.APPROVED)
+    rec.review_quality(second.experience_id, QualityState.APPROVED)
     lm = LearningManager()
+    dataset = lm.build_dataset(rec.list_experiences())
     run = lm.submit_training(dataset, base_model_revision="rev1")
     assert run.status.value == "completed"
     assert run.output_path.startswith("mock://")
