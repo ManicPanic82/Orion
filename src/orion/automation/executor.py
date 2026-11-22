@@ -96,7 +96,9 @@ class AutomationExecutor:
             return None
         if not resolved.is_file():
             return None
-        if any(resolved.is_relative_to(root) for root in self._approved_roots):
+        if not candidate.is_absolute() and any(
+            resolved.is_relative_to(root) for root in self._approved_roots
+        ):
             return None
         return str(resolved)
 
