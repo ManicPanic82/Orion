@@ -203,8 +203,12 @@ class AutomationExecutor:
                 "status",
                 *request.args[1:],
             ]
+            for key in tuple(process_env):
+                if key.upper().startswith("GIT_"):
+                    process_env.pop(key, None)
             process_env.update(
                 {
+                    "GIT_CONFIG_NOSYSTEM": "1",
                     "GIT_OPTIONAL_LOCKS": "0",
                     "GIT_PAGER": "cat",
                     "PAGER": "cat",
