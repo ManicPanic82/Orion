@@ -450,14 +450,18 @@ def test_returned_permission_objects_cannot_mutate_gateway_policy() -> None:
 
 
 def test_capability_registry_does_not_expose_mutable_security_metadata() -> None:
-    capability = Capability(capability_id="write_file", resource_fields=["*"])
+    capability = Capability(capability_id="write_file", resource_fields=["path"])
     registry = CapabilityRegistry()
     registry.register(capability)
 
     capability.idempotency = IdempotencyClass.READ_ONLY
+    capability.resource_fields = ["*"]
     returned = registry.get("write_file")
     returned.idempotency = IdempotencyClass.READ_ONLY
-    assert registry.get("write_file").idempotency is IdempotencyClass.NON_IDEMPOTENT
+    returned.resource_fields = ["*"]
+    stored = registry.get("write_file")
+    assert stored.idempotency is IdempotencyClass.NON_IDEMPOTENT
+    assert stored.resource_fields == ["path"]
 
 
 
