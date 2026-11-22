@@ -238,6 +238,7 @@ def test_unsafe_running_task_is_quarantined_and_not_resumed() -> None:
         Capability(
             capability_id="charge_card",
             idempotency=IdempotencyClass.NON_IDEMPOTENT,
+            resource_fields=["*"],
         )
     )
     agent = ResidentAgent(
