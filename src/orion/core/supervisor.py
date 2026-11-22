@@ -112,6 +112,7 @@ class CoreSupervisor:
                 self._stop_child(child)
                 return 0
 
+            crash_reason = "child_exited"
             try:
                 poll = getattr(child, "poll", None)
                 if callable(poll):
@@ -135,7 +136,7 @@ class CoreSupervisor:
                     except subprocess.TimeoutExpired:
                         continue
             except Exception as exc:  # child died hard: treat as crash
-                self.record_crash(reason=f"child_wait_failed: {exc}", exit_code=None)
+                crash_reason = f"child_wait_failed: {exc}"
                 exit_code = 1
 
             if stop_event is not None and stop_event.is_set():
@@ -144,7 +145,7 @@ class CoreSupervisor:
             if exit_code == 0:
                 return 0
 
-            self.record_crash(reason="child_exited", exit_code=exit_code)
+            self.record_crash(reason=crash_reason, exit_code=exit_code)
             if not self.should_restart():
                 return 1
 
