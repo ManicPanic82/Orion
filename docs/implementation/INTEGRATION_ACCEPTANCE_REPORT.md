@@ -10,7 +10,7 @@ Orion — status of the security/integration repair cycle.
 ## Verdict
 
 Orion still is **not** the integrated Resident AI Workstation the roadmap
-intends. Subsystem foundations are present, but the follow-up audit found additional permission, recovery, privacy, and evaluation edge cases. They are being hardened on an isolated branch. Do not treat the README's "Phases 1–15 present; all targeted phases
+intends. Subsystem foundations are present, but the follow-up audit found additional permission, recovery, privacy, and evaluation edge cases. Follow-up hardening changes are now committed on an isolated branch; Windows execution and validation are still pending. Do not treat the README's "Phases 1–15 present; all targeted phases
 implemented" claim as a product claim. The real milestone is: Orion starts with
 Windows, remains resident, loads its model, accepts an objective, plans and
 executes a task through its permission gateway, remembers the experience,
@@ -55,8 +55,7 @@ mandatory restrictions raise; supplied PowerShell script always wins.
   (`approval_invalid`). One-time consumption retained.
 - The auto-match loop now also requires action and scope equality and drops
   the empty-args-hash bypass.
-- `PermissionGrant.matches()` enforces `action` and `scope` when set on the
-  grant (resource matching is now segment-aware and requires explicit wildcard selectors).
+- `PermissionGrant.matches()` requires exact capability/action/scope/resource selectors by default; wildcard selectors must be explicit, constraints are enforced, and path wildcards are segment-aware.
 
 Acceptance (tests): 7 tests in `tests/unit/test_permissions.py`
 (`test_approval_binding_rejects_wrong_*`, `test_approval_binding_accepts_matching_request`,
