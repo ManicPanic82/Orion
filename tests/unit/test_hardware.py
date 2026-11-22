@@ -102,7 +102,7 @@ def test_inventory_collects_all_gpus_os_and_memory(monkeypatch) -> None:
     monkeypatch.setattr(HardwareManager, "_run_query", query)
     inventory = HardwareManager().collect_inventory()
     assert inventory.os_version == "Microsoft Windows 10 Pro 10.0.19045 19045"
-    assert inventory.os_arch == "64-bit"
+    assert inventory.os_arch == "x64"
     assert len(inventory.gpus) == 2
     assert inventory.gpus[0].memory_mb == 6144
     assert inventory.gpus[0].driver_version == "1.2.3"
