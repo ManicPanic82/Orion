@@ -13,17 +13,42 @@ from orion.experience.models import (
     PrivacyState,
     QualityState,
 )
+from orion.experience.store import ExperienceStore
+
+
+def _scrub_mapping(mapping: dict, fields: list[str]) -> None:
+    """Replace the values of ``fields`` present in ``mapping`` with a marker."""
+    for key in mapping:
+        if key in fields:
+            mapping[key] = "[REDACTED]"
 
 
 class ExperienceRecorder:
     def __init__(
-        self, *, capture_enabled: bool = True, excluded_scopes: set[str] | None = None
+        self,
+        *,
+        capture_enabled: bool = True,
+        excluded_scopes: set[str] | None = None,
+        store: ExperienceStore | None = None,
     ) -> None:
         self.capture_enabled = capture_enabled
         self.excluded_scopes: set[str] = set(excluded_scopes or set())
+        # Optional durable backend (e.g. SQLiteExperienceStore). When set, the
+        # in-memory dict is bypassed and all operations go through the store.
+        self.store = store
         self._experiences: dict[str, Experience] = {}
         self._lock = threading.RLock()
         self.last_error: str | None = None
+
+    def _save(self, exp: Experience) -> None:
+        if self.store is not None:
+            self.store.save(exp)
+
+    def _discard(self, experience_id: str) -> bool:
+        if self.store is not None:
+            return self.store.delete(experience_id)
+        with self._lock:
+            return self._experiences.pop(experience_id, None) is not None
 
     def pause_capture(self) -> None:
         self.capture_enabled = False
@@ -64,8 +89,10 @@ class ExperienceRecorder:
                 scope=scope,
                 metadata=dict(metadata or {}),
             )
-            with self._lock:
-                self._experiences[exp.experience_id] = exp
+            self._save(exp)
+            if self.store is None:
+                with self._lock:
+                    self._experiences[exp.experience_id] = exp
             self.last_error = None
             return exp
         except Exception as exc:
@@ -79,7 +106,6 @@ class ExperienceRecorder:
         outcome: OutcomeClass | str | None = None,
     ) -> Experience | None:
         try:
-
             if outcome is None:
                 state = getattr(task, "state", None)
                 if state is not None and getattr(state, "value", state) == "completed":
@@ -117,10 +143,14 @@ class ExperienceRecorder:
             return None
 
     def get(self, experience_id: str) -> Experience | None:
+        if self.store is not None:
+            return self.store.get(experience_id)
         with self._lock:
             return self._experiences.get(experience_id)
 
     def list_experiences(self) -> list[Experience]:
+        if self.store is not None:
+            return self.store.list()
         with self._lock:
             return list(self._experiences.values())
 
@@ -138,6 +168,7 @@ class ExperienceRecorder:
         with self._lock:
             exp.feedback.append(fb)
             # A correction does not change original outcome, but marks corrected if requested.
+        self._save(exp)
         return fb
 
     def mark_corrected(self, experience_id: str) -> Experience:
@@ -145,6 +176,7 @@ class ExperienceRecorder:
         if exp is None:
             raise KeyError(f"experience not found: {experience_id}")
         exp.outcome = OutcomeClass.CORRECTED
+        self._save(exp)
         return exp
 
     def review_privacy(self, experience_id: str, state: PrivacyState | str) -> Experience:
@@ -159,6 +191,7 @@ class ExperienceRecorder:
             and exp.quality_state is QualityState.APPROVED
             and not exp.excluded
         )
+        self._save(exp)
         return exp
 
     def review_quality(self, experience_id: str, state: QualityState | str) -> Experience:
@@ -173,6 +206,7 @@ class ExperienceRecorder:
             and exp.quality_state is QualityState.APPROVED
             and not exp.excluded
         )
+        self._save(exp)
         return exp
 
     def exclude(self, experience_id: str) -> Experience:
@@ -181,11 +215,11 @@ class ExperienceRecorder:
             raise KeyError(f"experience not found: {experience_id}")
         exp.excluded = True
         exp.eligible_for_training = False
+        self._save(exp)
         return exp
 
     def delete(self, experience_id: str) -> bool:
-        with self._lock:
-            return self._experiences.pop(experience_id, None) is not None
+        return self._discard(experience_id)
 
     def redact(self, experience_id: str, fields: list[str]) -> Experience:
         exp = self.get(experience_id)
@@ -193,11 +227,16 @@ class ExperienceRecorder:
             raise KeyError(f"experience not found: {experience_id}")
         exp.redacted_fields = list(fields)
         exp.privacy_state = PrivacyState.REDACTED
+        # Apply the redaction to the stored data, not only to the marker: the
+        # dataset builder and any export must never see the original values.
+        _scrub_mapping(exp.metadata, exp.redacted_fields)
+        for action in exp.actions:
+            _scrub_mapping(action.input, exp.redacted_fields)
+            if "observed_result" in exp.redacted_fields or "actions" in exp.redacted_fields:
+                action.observed_result = "[REDACTED]"
         exp.eligible_for_training = exp.quality_state is QualityState.APPROVED and not exp.excluded
+        self._save(exp)
         return exp
 
     def export(self, *, redact: bool = True) -> list[dict[str, Any]]:
-        with self._lock:
-            return [
-                exp.as_dict(redact=redact) for exp in self._experiences.values() if not exp.excluded
-            ]
+        return [exp.as_dict(redact=redact) for exp in self.list_experiences() if not exp.excluded]

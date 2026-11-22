@@ -1,6 +1,11 @@
-"""Core supervisor: bounded restart policy and crash diagnostics."""
+"""Core supervisor: real process supervision with bounded restart policy."""
 
 from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Callable
+from typing import Any
 
 from orion.core.lifecycle import CoreLifecycleState
 
@@ -38,7 +43,13 @@ class RestartPolicy:
 
 
 class CoreSupervisor:
-    """Owns restart decisions and crash diagnostics for the Core process."""
+    """Supervises child processes: watches them and restarts crashed ones.
+
+    The supervisor is the decision layer for restart behaviour (bounded
+    backoff policy + crash diagnostics); :meth:`supervise` is the execution
+    layer: it actually starts a child, watches it, and restarts it while the
+    policy allows.
+    """
 
     def __init__(self, policy: RestartPolicy | None = None) -> None:
         self._policy = policy or RestartPolicy()
@@ -76,3 +87,33 @@ class CoreSupervisor:
         if crashed and not self.should_restart():
             return CoreLifecycleState.FAILED
         return CoreLifecycleState.STOPPED
+
+    def supervise(
+        self,
+        spawn: Callable[[], Any],
+        *,
+        stop_event: threading.Event | None = None,
+    ) -> int:
+        """Supervise a child process with the restart policy.
+
+        Starts the child via ``spawn`` and loops: when the child exits, the
+        exit is recorded as a crash and a new child is spawned with
+        backoff while the policy permits. Returns ``0`` on clean exit or a
+        requested stop; returns ``1`` when the restart budget is exhausted
+        after repeated crashes.
+        """
+        child = spawn()
+        while not (stop_event is not None and stop_event.is_set()):
+            try:
+                exit_code = child.wait()
+            except Exception as exc:  # child died hard: treat as crash
+                self.record_crash(reason=f"child_wait_failed: {exc}", exit_code=None)
+                exit_code = 1
+            if exit_code == 0 or (stop_event is not None and stop_event.is_set()):
+                return 0
+            self.record_crash(reason="child_exited", exit_code=exit_code)
+            if not self.should_restart():
+                return 1
+            time.sleep(self.policy.backoff_s(self._attempts))
+            child = spawn()
+        return 0

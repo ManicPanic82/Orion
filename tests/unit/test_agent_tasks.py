@@ -6,13 +6,18 @@ from orion.agent import ResidentAgent
 from orion.capabilities import CapabilityRegistry, register_mock_capabilities
 from orion.capabilities.executor import CapabilityExecutor
 from orion.capabilities.permissions import MockPermissionGateway
+from orion.tasks import InMemoryTaskRepository, TaskManager
 
 
 def _make_agent() -> ResidentAgent:
     reg = CapabilityRegistry()
     register_mock_capabilities(reg)
     executor = CapabilityExecutor(reg, MockPermissionGateway())
-    return ResidentAgent(registry=reg, executor=executor)
+    return ResidentAgent(
+        registry=reg,
+        executor=executor,
+        task_manager=TaskManager(repository=InMemoryTaskRepository()),
+    )
 
 
 def test_objective_creates_task() -> None:

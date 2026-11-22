@@ -85,8 +85,8 @@ class ResidentAgent:
             task = self.task_manager.transition_task_state(task_id, TaskState.PLANNED)
         if task.state is TaskState.PLANNED:
             task = self.task_manager.transition_task_state(task_id, TaskState.RUNNING)
-        task.started_at = (
-            task.started_at or datetime.datetime.now(datetime.UTC).isoformat()
+        self.task_manager.update_task(
+            task_id, started_at=task.started_at or datetime.datetime.now(datetime.UTC).isoformat()
         )
 
         observations: list[Any] = []
@@ -103,7 +103,7 @@ class ResidentAgent:
                 continue
             self.task_manager.transition_step_state(task_id, step.step_id, TaskStepState.RUNNING)
             step.started_at = datetime.datetime.now(datetime.UTC).isoformat()
-            self.task_manager._repository.save(task)
+            self.task_manager.update_step(task_id, step.step_id, started_at=step.started_at)
 
             result = self.executor.execute(step, cancel_event=cancel_event)
             observations.append(result)
@@ -113,6 +113,7 @@ class ResidentAgent:
                     task_id, step.step_id, TaskStepState.CANCELLED
                 )
                 step.error = "cancelled"
+                self.task_manager.update_step(task_id, step.step_id, error="cancelled")
                 continue
 
             if result.get("success"):
@@ -121,34 +122,41 @@ class ResidentAgent:
                 self.task_manager.transition_step_state(
                     task_id, step.step_id, TaskStepState.COMPLETED
                 )
+                self.task_manager.update_step(
+                    task_id, step.step_id, output=step.output, outcome=step.outcome
+                )
             else:
                 step.error = result.get("error")
                 step.outcome = "failure"
                 self.task_manager.transition_step_state(task_id, step.step_id, TaskStepState.FAILED)
+                self.task_manager.update_step(
+                    task_id, step.step_id, error=step.error, outcome=step.outcome
+                )
                 # Stop on failure.
-                task = self.task_manager.get_task(task_id)
-                task.state = TaskState.FAILED
-                task.failure_code = result.get("error_code", "step_failed")
-                task.finished_at = datetime.datetime.now(datetime.UTC).isoformat()
-                self.task_manager._repository.save(task)
-                return task
+                return self.task_manager.update_task(
+                    task_id,
+                    state=TaskState.FAILED,
+                    failure_code=result.get("error_code", "step_failed"),
+                    finished_at=datetime.datetime.now(datetime.UTC).isoformat(),
+                )
 
         task = self.task_manager.get_task(task_id)
         # Verification.
         verification = self.verifier(task, observations)
         if verification.success:
-            task.state = TaskState.COMPLETED
-            task.result_summary = verification.details
+            state = TaskState.COMPLETED
+        elif any(s.state is TaskStepState.COMPLETED for s in task.steps) and any(
+            s.state is TaskStepState.FAILED for s in task.steps
+        ):
+            state = TaskState.PARTIAL
         else:
-            if any(s.state is TaskStepState.COMPLETED for s in task.steps) and any(
-                s.state is TaskStepState.FAILED for s in task.steps
-            ):
-                task.state = TaskState.PARTIAL
-            else:
-                task.state = TaskState.FAILED
-            task.result_summary = verification.details
-        task.finished_at = datetime.datetime.now(datetime.UTC).isoformat()
-        self.task_manager._repository.save(task)
+            state = TaskState.FAILED
+        task = self.task_manager.update_task(
+            task_id,
+            state=state,
+            result_summary=verification.details,
+            finished_at=datetime.datetime.now(datetime.UTC).isoformat(),
+        )
         self.task_manager.events.publish(
             "task.finished", {"task_id": task_id, "state": task.state.value}
         )

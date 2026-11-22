@@ -2,21 +2,55 @@
 
 from __future__ import annotations
 
-from orion.experience.models import Experience, OutcomeClass
+import hashlib
+import random
+
+from orion.experience.models import Experience, OutcomeClass, PrivacyState
 from orion.learning.models import DatasetExample, DatasetVersion
 
 BUILDER_VERSION = "1.0"
 
 
+def _split_ids(
+    examples: list[DatasetExample], fraction: float, seed_source: str
+) -> tuple[list[str], list[str]]:
+    """Split example IDs into (eval_ids, train_ids) reproducibly.
+
+    The split is a pure function of ``seed_source`` (dataset version +
+    eligible source experiences) and the examples list: the same dataset
+    content always yields the same split, and eval/train are disjoint.
+    """
+    seed = int.from_bytes(hashlib.sha256(seed_source.encode("utf-8")).digest()[:8], "big")
+    order = list(range(len(examples)))
+    random.Random(seed).shuffle(order)
+    eval_count = max(1, int(len(order) * fraction)) if order else 0
+    eval_ids = [examples[i].example_id for i in order[:eval_count]]
+    train_ids = [examples[i].example_id for i in order[eval_count:]]
+    return eval_ids, train_ids
+
+
+def _redacted(exp: Experience, key: str) -> bool:
+    """A value is hidden when it is in ``redacted_fields`` or the experience is
+    marked REDACTED; redaction state alone is never enough because ``redact()``
+    also scrubs the stored data."""
+    return key in exp.redacted_fields or exp.privacy_state is PrivacyState.REDACTED
+
+
+def _scrub(exp: Experience, value: str, key: str) -> str:
+    return "[REDACTED]" if _redacted(exp, key) else value
+
+
 def _example_from_experience(exp: Experience) -> DatasetExample:
-    # Build a simple conversational example.
+    # Build a simple conversational example. Redacted fields never enter the
+    # dataset in original form; the builder re-applies redaction as a second
+    # layer of defence (defense in depth).
     input_payload = {
-        "objective": exp.metadata.get("request", ""),
+        "objective": _scrub(exp, exp.metadata.get("request", ""), "request"),
         "actions": [a.capability_id for a in exp.actions],
     }
     output_payload = {
         "outcome": exp.outcome.value,
-        "summary": exp.metadata.get("summary", ""),
+        "summary": _scrub(exp, exp.metadata.get("summary", ""), "summary"),
     }
     return DatasetExample(
         source_experience_id=exp.experience_id,
@@ -54,9 +88,11 @@ def build_dataset(
         exclusions=[e.experience_id for e in experiences if e not in eligible],
         split_strategy=f"held_out_{int(split_eval_fraction * 100)}",
     )
-    # Split.
-    eval_count = max(1, int(len(examples) * split_eval_fraction)) if examples else 0
-    dataset.eval_ids = [e.example_id for e in examples[:eval_count]]
-    dataset.train_ids = [e.example_id for e in examples[eval_count:]]
+    # Reproducible split: shuffled with a seed derived from the dataset
+    # content (version + eligible source experiences), never "first N".
+    seed_source = (
+        f"{version}|{len(examples)}|{','.join(sorted({e.source_experience_id for e in examples}))}"
+    )
+    dataset.eval_ids, dataset.train_ids = _split_ids(examples, split_eval_fraction, seed_source)
     dataset.checksum = dataset.compute_checksum()
     return dataset

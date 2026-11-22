@@ -42,12 +42,16 @@ class CapabilityExecutor:
                     "error_code": "permission_unavailable",
                 }
             decision = gateway.decide(
-                capability_id, resource="", context={"step": getattr(step, "step_id", "")}
+                capability_id,
+                resource="",
+                idempotency=capability.idempotency.value,
+                step_id=getattr(step, "step_id", ""),
+                args=dict(getattr(step, "input", {}) or {}),
             )
-            if decision is not PermissionDecision.ALLOW:
+            if decision.decision is not PermissionDecision.ALLOW:
                 return {
                     "success": False,
-                    "error": f"permission {decision.value}",
+                    "error": f"permission {decision.decision.value}",
                     "error_code": "permission_denied",
                 }
 

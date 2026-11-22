@@ -9,15 +9,18 @@ from orion.experience.models import (
     PrivacyState,
     QualityState,
 )
+from orion.experience.store import ExperienceStore, SQLiteExperienceStore
 
 __all__ = [
     "Experience",
     "ExperienceAction",
     "ExperienceFeedback",
     "ExperienceRecorder",
+    "ExperienceStore",
     "OutcomeClass",
     "PrivacyState",
     "QualityState",
+    "SQLiteExperienceStore",
 ]
 # Aliases
 ExperienceEngine = ExperienceRecorder

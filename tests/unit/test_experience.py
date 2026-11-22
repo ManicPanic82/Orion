@@ -15,12 +15,16 @@ def test_task_episode_traceable() -> None:
     from orion.capabilities import CapabilityRegistry, register_mock_capabilities
     from orion.capabilities.executor import CapabilityExecutor
     from orion.capabilities.permissions import MockPermissionGateway
-    from orion.tasks import TaskManager
+    from orion.tasks import InMemoryTaskRepository, TaskManager
 
     reg = CapabilityRegistry()
     register_mock_capabilities(reg)
     executor = CapabilityExecutor(reg, MockPermissionGateway())
-    agent = ResidentAgent(registry=reg, executor=executor, task_manager=TaskManager())
+    agent = ResidentAgent(
+        registry=reg,
+        executor=executor,
+        task_manager=TaskManager(repository=InMemoryTaskRepository()),
+    )
     task = agent.submit_and_create_task("echo hello")
     agent.run_task(task.task_id)
     recorder = ExperienceRecorder()
@@ -71,6 +75,23 @@ def test_redaction_removes_sensitive_fields_from_export() -> None:
     )
 
 
+def test_redact_scrubs_stored_data() -> None:
+    recorder = ExperienceRecorder()
+    exp = recorder.capture_experience(
+        objective_id="o",
+        task_id="t",
+        outcome=OutcomeClass.SUCCESS,
+        metadata={"request": "secret-request", "summary": "secret-summary"},
+    )
+    recorder.redact(exp.experience_id, ["request", "summary"])
+    stored = recorder.get(exp.experience_id)
+    assert stored is not None
+    assert stored.metadata["request"] != "secret-request"
+    assert stored.metadata["summary"] != "secret-summary"
+    exported = recorder.export(redact=True)
+    assert exported[0]["metadata"]["request"] != "secret-request"
+
+
 def test_eligibility_requires_review() -> None:
     recorder = ExperienceRecorder()
     exp = recorder.capture_experience(objective_id="o", task_id="t", outcome=OutcomeClass.SUCCESS)
@@ -80,6 +101,37 @@ def test_eligibility_requires_review() -> None:
     assert exp.eligible_for_training is True
     recorder.exclude(exp.experience_id)
     assert exp.eligible_for_training is False
+
+
+def test_sqlite_experience_store_roundtrip(tmp_path) -> None:
+    from orion.experience import SQLiteExperienceStore
+
+    store = SQLiteExperienceStore(tmp_path / "exp.db")
+    recorder = ExperienceRecorder(store=store)
+    exp = recorder.capture_experience(
+        objective_id="o",
+        task_id="t",
+        outcome=OutcomeClass.SUCCESS,
+        metadata={"request": "req-1"},
+    )
+    assert recorder.get(exp.experience_id) is not None
+
+    # A fresh recorder over the same database file sees the experience:
+    # experiences survive restart.
+    recorder2 = ExperienceRecorder(store=SQLiteExperienceStore(tmp_path / "exp.db"))
+    got = recorder2.get(exp.experience_id)
+    assert got is not None
+    assert got.metadata["request"] == "req-1"
+    assert got.outcome is OutcomeClass.SUCCESS
+
+
+def test_sqlite_experience_store_delete(tmp_path) -> None:
+    from orion.experience import SQLiteExperienceStore
+
+    recorder = ExperienceRecorder(store=SQLiteExperienceStore(tmp_path / "exp.db"))
+    exp = recorder.capture_experience(objective_id="o", task_id="t", outcome=OutcomeClass.SUCCESS)
+    assert recorder.delete(exp.experience_id) is True
+    assert recorder.get(exp.experience_id) is None
 
 
 def test_capture_failure_non_fatal() -> None:

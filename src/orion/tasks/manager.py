@@ -4,19 +4,27 @@ from __future__ import annotations
 
 import datetime
 import threading
+from pathlib import Path
 from typing import Any
 
+from orion.config.paths import app_data_dir
 from orion.core.events import EventStream
 from orion.tasks.models import IdempotencyClass, Objective, Task, TaskState, TaskStep, TaskStepState
-from orion.tasks.repository import InMemoryTaskRepository, TaskRepository
+from orion.tasks.repository import SQLiteTaskRepository, TaskRepository
 from orion.tasks.state_machine import transition_step, transition_task
 
 
 class TaskManager:
     def __init__(
-        self, repository: TaskRepository | None = None, events: EventStream | None = None
+        self,
+        repository: TaskRepository | None = None,
+        events: EventStream | None = None,
+        db_path: str | Path | None = None,
     ) -> None:
-        self._repository = repository or InMemoryTaskRepository()
+        # Durable by default: task history survives process restarts.
+        self._repository = repository or SQLiteTaskRepository(
+            db_path if db_path is not None else app_data_dir() / "orion.db"
+        )
         self._events = events or EventStream()
         self._request_index: dict[str, str] = {}  # request_id -> task_id
         self._cancellations: dict[str, threading.Event] = {}
@@ -114,6 +122,20 @@ class TaskManager:
         with self._lock:
             task = self._repository.get(task_id)
             task.state = transition_task(task.state, target)
+            self._repository.save(task)
+            return task
+
+    def update_task(self, task_id: str, **changes: Any) -> Task:
+        """Persist arbitrary task field changes via the manager API.
+
+        Used by callers that hold only a task snapshot: mutations are applied
+        to the current repository state and saved, so snapshot staleness can
+        not clobber concurrent transitions.
+        """
+        with self._lock:
+            task = self._repository.get(task_id)
+            for key, value in changes.items():
+                setattr(task, key, value)
             self._repository.save(task)
             return task
 

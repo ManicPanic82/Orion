@@ -10,7 +10,7 @@ from orion.tasks.models import (
     TaskStep,
     TaskStepState,
 )
-from orion.tasks.repository import InMemoryTaskRepository, TaskRepository
+from orion.tasks.repository import InMemoryTaskRepository, SQLiteTaskRepository, TaskRepository
 from orion.tasks.state_machine import (
     InvalidTransitionError,
     can_transition_step,
@@ -25,6 +25,7 @@ __all__ = [
     "InvalidTransitionError",
     "Objective",
     "ObjectiveState",
+    "SQLiteTaskRepository",
     "Task",
     "TaskManager",
     "TaskRepository",

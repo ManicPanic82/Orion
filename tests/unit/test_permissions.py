@@ -113,3 +113,92 @@ def test_restricted_denies_side_effect() -> None:
     dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
     assert dec.decision is PermissionDecision.DENY
     assert dec.rationale_code == "restricted_mode"
+
+
+def test_approval_binding_rejects_wrong_capability() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    ap = gw.request_approval(capability_id="write_file", resource="/tmp/x", ttl_seconds=300)
+    gw.approve(ap.approval_id)
+    dec = gw.decide("read_file", "/tmp/x", approval_id=ap.approval_id, idempotency="non_idempotent")
+    assert dec.decision is PermissionDecision.DENY
+
+
+def test_approval_binding_rejects_wrong_resource() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    ap = gw.request_approval(capability_id="write_file", resource="/tmp/x", ttl_seconds=300)
+    gw.approve(ap.approval_id)
+    dec = gw.decide(
+        "write_file", "/tmp/y", approval_id=ap.approval_id, idempotency="non_idempotent"
+    )
+    assert dec.decision is PermissionDecision.DENY
+
+
+def test_approval_binding_rejects_wrong_action() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    ap = gw.request_approval(
+        capability_id="write_file", action="execute", resource="/tmp/x", ttl_seconds=300
+    )
+    gw.approve(ap.approval_id)
+    dec = gw.decide(
+        "write_file",
+        "/tmp/x",
+        action="delete",
+        approval_id=ap.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert dec.decision is PermissionDecision.DENY
+
+
+def test_approval_binding_rejects_wrong_args() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    ap = gw.request_approval(
+        capability_id="write_file", resource="/tmp/x", args={"path": "a"}, ttl_seconds=300
+    )
+    gw.approve(ap.approval_id)
+    dec = gw.decide(
+        "write_file",
+        "/tmp/x",
+        args={"path": "b"},
+        approval_id=ap.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert dec.decision is PermissionDecision.DENY
+
+
+def test_approval_binding_accepts_matching_request() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    ap = gw.request_approval(
+        capability_id="write_file",
+        action="execute",
+        resource="/tmp/x",
+        args={"path": "a"},
+        ttl_seconds=300,
+    )
+    gw.approve(ap.approval_id)
+    dec = gw.decide(
+        "write_file",
+        "/tmp/x",
+        action="execute",
+        args={"path": "a"},
+        approval_id=ap.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert dec.decision is PermissionDecision.ALLOW
+
+
+def test_grant_enforces_action_constraint() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x", action="execute"))
+    dec_ok = gw.decide("write_file", "/tmp/x", action="execute", idempotency="non_idempotent")
+    assert dec_ok.decision is PermissionDecision.ALLOW
+    dec_bad = gw.decide("write_file", "/tmp/x", action="read", idempotency="non_idempotent")
+    assert dec_bad.decision is PermissionDecision.DENY
+
+
+def test_grant_enforces_scope_constraint() -> None:
+    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x", scope="global"))
+    dec_ok = gw.decide("write_file", "/tmp/x", scope="global", idempotency="non_idempotent")
+    assert dec_ok.decision is PermissionDecision.ALLOW
+    dec_bad = gw.decide("write_file", "/tmp/x", scope="project", idempotency="non_idempotent")
+    assert dec_bad.decision is PermissionDecision.DENY

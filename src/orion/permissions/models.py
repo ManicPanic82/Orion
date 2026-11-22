@@ -57,7 +57,9 @@ class PermissionGrant:
         except ValueError:
             return False
 
-    def matches(self, capability_id: str, resource: str) -> bool:
+    def matches(
+        self, capability_id: str, resource: str, *, action: str = "", scope: str = ""
+    ) -> bool:
         if self.capability_id and self.capability_id != capability_id:
             return False
         if self.resource and self.resource not in ("*", ""):
@@ -66,7 +68,10 @@ class PermissionGrant:
                     return False
             elif self.resource != resource:
                 return False
-        return True
+        # Grants store action and scope; enforce both when set.
+        if self.action and self.action != action:
+            return False
+        return not (self.scope and self.scope != scope)
 
     def as_dict(self) -> dict[str, Any]:
         return {

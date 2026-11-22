@@ -93,9 +93,17 @@ class LearningManager:
     ) -> EvaluationResult:
         metrics = dict(metrics or {})
         if passed is None:
-            # Simple rule: passed if accuracy >= 0.8 (if provided).
+            # Mandatory, evidence-based certification: an evaluation without
+            # an accuracy metric cannot pass on its own.
             acc = metrics.get("accuracy")
-            passed = True if acc is None else bool(acc >= 0.8)
+            if acc is None:
+                raise ValueError(
+                    "evaluation requires an accuracy metric or an explicit passed result"
+                )
+            passed = bool(acc >= 0.8)
+        if metrics.get("regression") is False:
+            # Regression checks: a known regression fails the candidate.
+            passed = False
         ev = EvaluationResult(
             candidate_profile_id=candidate_profile_id,
             baseline_profile_id=baseline_profile_id or "",
@@ -126,10 +134,18 @@ class LearningManager:
     ) -> PromotionRecord:
         if not approved:
             raise PermissionError("promotion requires explicit approval")
-        if evaluation is not None and not evaluation.passed:
+        candidate_id = getattr(candidate_profile, "profile_id", str(candidate_profile))
+        # Mandatory, candidate-specific held-out evaluation before promotion.
+        if evaluation is None:
+            raise ValueError("promotion requires a held-out evaluation result")
+        if not evaluation.metrics:
+            raise ValueError("evaluation must record metrics")
+        if evaluation.candidate_profile_id != candidate_id:
+            raise ValueError("evaluation does not belong to the candidate being promoted")
+        if not evaluation.passed:
             raise ValueError("candidate failed evaluation")
         record = PromotionRecord(
-            candidate_profile_id=getattr(candidate_profile, "profile_id", str(candidate_profile)),
+            candidate_profile_id=candidate_id,
             previous_profile_id=previous_profile_id,
             status=PromotionStatus.APPROVED,
             approver=approver or "user",

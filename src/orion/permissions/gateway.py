@@ -70,12 +70,41 @@ class PermissionGateway:
         with self._lock:
             return list(self._grants.values())
 
-    def _find_grant(self, capability_id: str, resource: str) -> PermissionGrant | None:
+    def _find_grant(
+        self, capability_id: str, resource: str, *, action: str = "", scope: str = ""
+    ) -> PermissionGrant | None:
         now = datetime.now(UTC)
         for grant in self._grants.values():
-            if grant.is_active(now) and grant.matches(capability_id, resource):
+            if grant.is_active(now) and grant.matches(
+                capability_id, resource, action=action, scope=scope
+            ):
                 return grant
         return None
+
+    @staticmethod
+    def _approval_binding_violation(
+        approval: ApprovalRequest,
+        *,
+        capability_id: str,
+        resource: str,
+        action: str,
+        scope: str,
+        args_hash: str,
+    ) -> bool:
+        """Return True when an approval is not bound to this exact request.
+
+        An approval may be used only for the complete request it was issued
+        for: same capability, resource, action, scope, and arguments.
+        """
+        if approval.capability_id and approval.capability_id != capability_id:
+            return True
+        if approval.resource and approval.resource != resource:
+            return True
+        if approval.action and approval.action != action:
+            return True
+        if approval.scope and approval.scope != scope:
+            return True
+        return bool(approval.args_hash and approval.args_hash != args_hash)
 
     # -- approvals -------------------------------------------------------
 
@@ -236,9 +265,14 @@ class PermissionGateway:
                 )
                 return decision
 
+            effective_action = action or capability_id
+            args_hash = hashlib.sha256(repr(sorted((args or {}).items())).encode()).hexdigest()
+
             # Read-only capabilities are allowed by default.
             if idempotency == "read_only":
-                grant = self._find_grant(capability_id, resource)
+                grant = self._find_grant(
+                    capability_id, resource, action=effective_action, scope=scope
+                )
                 decision = PolicyDecision(
                     PermissionDecision.ALLOW,
                     rationale_code="read_only_allowed",
@@ -246,7 +280,7 @@ class PermissionGateway:
                 )
                 self._audit_decision(
                     capability_id,
-                    action or capability_id,
+                    effective_action,
                     resource,
                     effective_mode.value,
                     PermissionDecision.ALLOW,
@@ -257,7 +291,7 @@ class PermissionGateway:
                 return decision
 
             # Check grants.
-            grant = self._find_grant(capability_id, resource)
+            grant = self._find_grant(capability_id, resource, action=effective_action, scope=scope)
             if grant is not None:
                 decision = PolicyDecision(
                     PermissionDecision.ALLOW,
@@ -266,7 +300,7 @@ class PermissionGateway:
                 )
                 self._audit_decision(
                     capability_id,
-                    action or capability_id,
+                    effective_action,
                     resource,
                     effective_mode.value,
                     PermissionDecision.ALLOW,
@@ -282,14 +316,15 @@ class PermissionGateway:
                 approval = self._approvals.get(approval_id)
             else:
                 # Find a matching approved, unexpired, unconsumed approval.
-                args_hash = hashlib.sha256(repr(sorted((args or {}).items())).encode()).hexdigest()
                 for ap in self._approvals.values():
                     if (
                         ap.capability_id == capability_id
                         and ap.resource == resource
+                        and ap.action == effective_action
+                        and (not ap.scope or ap.scope == scope)
+                        and (ap.args_hash == args_hash or ap.args_hash == "")
                         and ap.status is ApprovalStatus.APPROVED
                         and not ap.is_expired()
-                        and (ap.args_hash == args_hash or ap.args_hash == "")
                     ):
                         approval = ap
                         break
@@ -297,7 +332,17 @@ class PermissionGateway:
             if approval is not None:
                 if approval.is_expired():
                     approval.status = ApprovalStatus.EXPIRED
-                elif approval.status is ApprovalStatus.APPROVED:
+                elif (
+                    approval.status is ApprovalStatus.APPROVED
+                    and not self._approval_binding_violation(
+                        approval,
+                        capability_id=capability_id,
+                        resource=resource,
+                        action=effective_action,
+                        scope=scope,
+                        args_hash=args_hash,
+                    )
+                ):
                     # One-time consumption.
                     if approval.one_time:
                         approval.status = ApprovalStatus.CONSUMED
@@ -308,7 +353,7 @@ class PermissionGateway:
                     )
                     self._audit_decision(
                         capability_id,
-                        action or capability_id,
+                        effective_action,
                         resource,
                         effective_mode.value,
                         PermissionDecision.ALLOW,

@@ -16,6 +16,9 @@ class IdempotencyClass(StrEnum):
 
 @dataclass(slots=True)
 class ExecutionRequest:
+    # Default-deny: an unspecified classification is a side-effecting command.
+    # ``READ_ONLY`` is only honoured through the executor's deterministic
+    # allowlist, never trusted from a model-supplied value.
     request_id: str = field(default_factory=lambda: str(uuid4()))
     executable: str = ""
     args: list[str] = field(default_factory=list)
@@ -25,7 +28,7 @@ class ExecutionRequest:
     output_cap: int = 64 * 1024
     task_id: str | None = None
     correlation_id: str | None = None
-    idempotency: IdempotencyClass = IdempotencyClass.READ_ONLY
+    idempotency: IdempotencyClass = IdempotencyClass.NON_IDEMPOTENT
     dry_run: bool = False
 
     def as_dict(self) -> dict[str, Any]:

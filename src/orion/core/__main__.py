@@ -44,7 +44,10 @@ def main(argv: list[str] | None = None) -> int:
 
     core.start()
     try:
-        stop_event.wait(timeout=30.0)
+        # Persistent lifetime: block until a stop is requested (SIGTERM/SIGINT
+        # or an injected stop). There is deliberately no idle timeout: the
+        # service is resident while the platform is running.
+        stop_event.wait()
     finally:
         core.stop()
 

@@ -19,7 +19,7 @@ class ProjectManager:
     def register_project(self, name: str, root: str, **kwargs: Any) -> Project:
         root_path = Path(root).resolve(strict=False)
         if self.allowed_roots and not any(
-            str(root_path).startswith(str(Path(r).resolve())) for r in self.allowed_roots
+            root_path.is_relative_to(Path(r).resolve(strict=False)) for r in self.allowed_roots
         ):
             raise ValueError(f"project root {root} is outside allowed roots")
         if not root_path.exists():

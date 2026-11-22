@@ -106,6 +106,28 @@ class TaskStep:
             "timeout_s": self.timeout_s,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TaskStep:
+        return cls(
+            step_id=data["step_id"],
+            task_id=data.get("task_id", ""),
+            sequence=data.get("sequence", 0),
+            capability_id=data.get("capability_id", ""),
+            capability_version=data.get("capability_version", "1"),
+            input=dict(data.get("input", {}) or {}),
+            state=TaskStepState(data.get("state", TaskStepState.PENDING.value)),
+            idempotency=IdempotencyClass(data.get("idempotency", IdempotencyClass.READ_ONLY.value)),
+            permission_decision=data.get("permission_decision", "not_evaluated"),
+            started_at=data.get("started_at"),
+            ended_at=data.get("ended_at"),
+            outcome=data.get("outcome", ""),
+            output=data.get("output"),
+            output_ref=data.get("output_ref"),
+            error=data.get("error"),
+            retry_count=data.get("retry_count", 0),
+            timeout_s=data.get("timeout_s", 30.0),
+        )
+
 
 @dataclass(slots=True)
 class Task:
@@ -141,3 +163,22 @@ class Task:
             "request_id": self.request_id,
             "recovery_safe": self.recovery_safe,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Task:
+        return cls(
+            task_id=data["task_id"],
+            objective_id=data.get("objective_id", ""),
+            title=data.get("title", ""),
+            state=TaskState(data.get("state", TaskState.CREATED.value)),
+            created_at=data.get("created_at", ""),
+            started_at=data.get("started_at"),
+            finished_at=data.get("finished_at"),
+            steps=[TaskStep.from_dict(s) for s in data.get("steps", [])],
+            current_step=data.get("current_step", 0),
+            checkpoint=data.get("checkpoint", ""),
+            result_summary=data.get("result_summary", ""),
+            failure_code=data.get("failure_code"),
+            request_id=data.get("request_id"),
+            recovery_safe=data.get("recovery_safe", True),
+        )

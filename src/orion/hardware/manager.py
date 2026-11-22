@@ -11,7 +11,19 @@ from orion.hardware.models import (
     GPUInfo,
     HardwareInventory,
     TelemetrySnapshot,
+    Vendor,
 )
+
+
+def _vendor_for_name(name: str) -> Vendor:
+    upper = name.upper()
+    if "NVIDIA" in upper:
+        return Vendor.NVIDIA
+    if "AMD" in upper or "ATI" in upper:
+        return Vendor.AMD
+    if "INTEL" in upper:
+        return Vendor.INTEL
+    return Vendor.OTHER
 
 
 class HardwareManager:
@@ -20,24 +32,49 @@ class HardwareManager:
         self._telemetry: list[TelemetrySnapshot] = []
         self._benchmarks: list[BenchmarkResult] = []
 
+    def _run_query(self, script: str, timeout: float = 15.0) -> str:
+        """Run a PowerShell query and return its trimmed stdout, or "" on failure."""
+        import subprocess
+
+        try:
+            proc = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return (proc.stdout or "").strip()
+        except Exception:
+            return ""
+
     def collect_inventory(self) -> HardwareInventory:
+        # Real collection: PowerShell (no external deps) queries on Windows.
+        cpu = self._run_query(
+            "(Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue "
+            "| Select-Object -First 1 -ExpandProperty Name)"
+        )
+        ram_bytes = self._run_query(
+            "(Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue "
+            "| Select-Object -First 1 -ExpandProperty TotalPhysicalMemory)"
+        )
+        try:
+            ram_mb = int(ram_bytes) // (1024 * 1024) if ram_bytes else 0
+        except ValueError:
+            ram_mb = 0
+        gpu_name = self._run_query(
+            "(Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue "
+            "| Where-Object { $_.Name -and $_.Name -notlike '*Microsoft*' } "
+            "| Select-Object -First 1 -ExpandProperty Name)"
+        )
         inventory = HardwareInventory(
             os_version=sys.version.split(" (")[-1].strip(")")
             if sys.platform == "win32"
             else sys.platform,
-            cpu="unknown",
-            ram_mb=0,
+            cpu=cpu or "unknown",
+            ram_mb=ram_mb,
             python_version=sys.version.split()[0],
         )
-        # Try to read GPU info from basic diagnostics without external deps.
-        gpu = GPUInfo(name="unknown")
-        try:
-            import platform
-
-            gpu.name = platform.processor() or "unknown"
-        except Exception:
-            pass
-        inventory.gpus = [gpu]
+        inventory.gpus = [GPUInfo(name=gpu_name or "unknown", vendor=_vendor_for_name(gpu_name))]
         self._inventory = inventory
         return inventory
 

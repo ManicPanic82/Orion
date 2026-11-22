@@ -6,10 +6,37 @@ import os
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
-from orion.automation.models import ExecutionRequest, ExecutionResult
+from orion.automation.models import ExecutionRequest, ExecutionResult, IdempotencyClass
 from orion.automation.workspace import ensure_within_roots, redact_text
+
+# Deterministic read-only commands: (allowed executable names, argument prefix).
+# This allowlist is the *only* way a request is classified as read-only without a
+# permission gateway. It is owned by this module, never by the model supplying
+# the request.
+_DETERMINISTIC_READ_ONLY_COMMANDS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
+    (frozenset({"git.exe", "git"}), ("status",)),
+    (frozenset({"git.exe", "git"}), ("log",)),
+)
+
+
+def classify_request(request: ExecutionRequest) -> IdempotencyClass:
+    """Deterministically classify the side effects of an execution request.
+
+    Read-only requires both an explicit ``READ_ONLY`` marking *and* a match on
+    the fixed allowlist above. Everything else is non-idempotent: the
+    classification never defaults to the safe category, so an omitted or
+    model-supplied classification can never widen permissions.
+    """
+    if request.idempotency is not IdempotencyClass.READ_ONLY:
+        return IdempotencyClass.NON_IDEMPOTENT
+    name = Path(request.executable).name.lower()
+    for allowed_names, prefix in _DETERMINISTIC_READ_ONLY_COMMANDS:
+        if name in allowed_names and request.args[: len(prefix)] == list(prefix):
+            return IdempotencyClass.READ_ONLY
+    return IdempotencyClass.NON_IDEMPOTENT
 
 
 class AutomationExecutor:
@@ -20,27 +47,34 @@ class AutomationExecutor:
         permission_gateway: Any = None,
         allowed_executables: set[str] | None = None,
     ) -> None:
+        # Mandatory restrictions: an executor without them is unusable.
         self.approved_roots = list(approved_roots or [])
         self.permission_gateway = permission_gateway
         self.allowed_executables = set(allowed_executables or set())
         self._lock = threading.RLock()
 
     def validate_request(self, request: ExecutionRequest) -> None:
-        if self.approved_roots and request.working_dir:
-            ensure_within_roots(request.working_dir, self.approved_roots)
-        if self.allowed_executables and request.executable not in self.allowed_executables:
+        if not self.allowed_executables:
+            raise ValueError("AutomationExecutor requires an allowed_executables allowlist")
+        if request.executable not in self.allowed_executables:
             raise ValueError(f"executable not allowed: {request.executable}")
+        if not self.approved_roots:
+            raise ValueError("AutomationExecutor requires approved_roots")
+        if request.working_dir:
+            ensure_within_roots(request.working_dir, self.approved_roots)
 
     def _permission_check(self, request: ExecutionRequest) -> None:
+        effective = classify_request(request)
+        if effective is IdempotencyClass.READ_ONLY:
+            # Deterministically allowlisted read-only command, no gateway needed.
+            return
         if self.permission_gateway is None:
             # Fail closed for side-effecting commands.
-            if request.idempotency.value != "read_only":
-                raise PermissionError("permission gateway unavailable")
-            return
+            raise PermissionError("permission gateway unavailable")
         decision = self.permission_gateway.decide(
             "automation.execute",
             request.working_dir or "",
-            idempotency=request.idempotency.value,
+            idempotency=effective.value,
             task_id=request.task_id,
             args={"executable": request.executable, "args": request.args},
         )
@@ -141,12 +175,10 @@ class AutomationExecutor:
         import base64
 
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-        req = request or ExecutionRequest(
-            executable="powershell.exe",
-            args=["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-        )
-        if not req.args:
-            req.args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]
-        # Ensure executable.
+        # The supplied script is the command to run: a caller-provided request
+        # may carry other options (timeout, task_id, ...), but any command
+        # arguments are dropped so the script is never ignored.
+        req = request or ExecutionRequest(executable="powershell.exe")
         req.executable = req.executable or "powershell.exe"
+        req.args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]
         return self.execute(req)

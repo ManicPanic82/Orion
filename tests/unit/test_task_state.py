@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from orion.tasks import (
+    InMemoryTaskRepository,
     TaskManager,
     TaskState,
     TaskStep,
@@ -13,6 +14,10 @@ from orion.tasks import (
     transition_task,
 )
 from orion.tasks.models import IdempotencyClass
+
+
+def _memory_manager() -> TaskManager:
+    return TaskManager(repository=InMemoryTaskRepository())
 
 
 def test_invalid_task_transition_rejected() -> None:
@@ -30,7 +35,7 @@ def test_step_transition_rejected() -> None:
 
 
 def test_duplicate_request_id_does_not_duplicate_task() -> None:
-    tm = TaskManager()
+    tm = _memory_manager()
 
     obj = tm.create_objective("do something")
     t1 = tm.create_task(obj, title="t", request_id="r1")
@@ -40,7 +45,7 @@ def test_duplicate_request_id_does_not_duplicate_task() -> None:
 
 
 def test_cancel_task() -> None:
-    tm = TaskManager()
+    tm = _memory_manager()
 
     obj = tm.create_objective("slow")
     step = TaskStep(capability_id="slow", idempotency=IdempotencyClass.READ_ONLY)
