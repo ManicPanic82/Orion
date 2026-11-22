@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from orion.experience import ExperienceRecorder, OutcomeClass, PrivacyState, QualityState
 from orion.learning import LearningManager, build_dataset
 from orion.learning.models import EvaluationResult
@@ -213,3 +215,26 @@ def test_redacted_experience_does_not_leak_into_dataset() -> None:
     blob = dataset.to_jsonl()
     assert "secret-request" not in blob
     assert "secret-summary" not in blob
+
+
+
+def test_evaluation_cannot_be_mutated_after_issuance() -> None:
+    lm = LearningManager()
+    evaluation = lm.evaluate_candidate("cand", metrics=_held_out_metrics(lm, 0.99))
+    evaluation.metrics["eval_examples"] = 999
+    profile = ModelProfile(profile_id="cand", base_model="mock-base")
+    with pytest.raises(ValueError, match="issued by this LearningManager"):
+        lm.promote_candidate(profile, evaluation=evaluation, approved=True)
+
+
+def test_evaluation_requires_a_registered_held_out_dataset() -> None:
+    lm = LearningManager()
+    metrics = {
+        "accuracy": 0.99,
+        "held_out": True,
+        "dataset_id": "not-registered",
+        "eval_dataset_checksum": "fake-checksum",
+        "eval_examples": 10,
+    }
+    with pytest.raises(ValueError, match="registered dataset"):
+        lm.evaluate_candidate("cand", metrics=metrics)
