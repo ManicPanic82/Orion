@@ -32,8 +32,23 @@ class CapabilityExecutor:
                 "error_code": "unavailable",
             }
 
-        # Permission check for side-effecting capabilities.
-        if capability.idempotency.value != "read_only":
+        # Resolve request context from the structured step, never from the
+        # planner's claimed idempotency value. Capability metadata is trusted
+        # application configuration; step input is request data.
+        step_input = dict(getattr(step, "input", {}) or {})
+        resource = str(
+            step_input.get("resource")
+            or step_input.get("path")
+            or step_input.get("file_path")
+            or step_input.get("target")
+            or ""
+        )
+        scopes = list(capability.required_scopes) or [str(getattr(step, "scope", "") or "")]
+        needs_permission = (
+            capability.idempotency.value != "read_only"
+            or any(scopes)
+        )
+        if needs_permission:
             gateway = self.permission_gateway
             if gateway is None:
                 return {
@@ -41,19 +56,24 @@ class CapabilityExecutor:
                     "error": "permission gateway unavailable",
                     "error_code": "permission_unavailable",
                 }
-            decision = gateway.decide(
-                capability_id,
-                resource="",
-                idempotency=capability.idempotency.value,
-                step_id=getattr(step, "step_id", ""),
-                args=dict(getattr(step, "input", {}) or {}),
-            )
-            if decision.decision is not PermissionDecision.ALLOW:
-                return {
-                    "success": False,
-                    "error": f"permission {decision.decision.value}",
-                    "error_code": "permission_denied",
-                }
+            for scope in scopes:
+                decision = gateway.decide(
+                    capability_id,
+                    resource=resource,
+                    action=str(getattr(step, "action", "") or capability_id),
+                    scope=scope,
+                    risk=capability.risk.value,
+                    task_id=getattr(step, "task_id", None),
+                    step_id=getattr(step, "step_id", ""),
+                    idempotency=capability.idempotency.value,
+                    args=step_input,
+                )
+                if decision.decision is not PermissionDecision.ALLOW:
+                    return {
+                        "success": False,
+                        "error": f"permission {decision.decision.value}",
+                        "error_code": "permission_denied",
+                    }
 
         if cancel_event is not None and cancel_event.is_set():
             return {"success": False, "error": "cancelled", "error_code": "cancelled"}
