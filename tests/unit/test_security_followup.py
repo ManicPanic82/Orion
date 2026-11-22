@@ -705,3 +705,37 @@ def test_automation_rejects_environment_path_hijacking(tmp_path) -> None:
     )
     with pytest.raises(ValueError, match="environment cannot override"):
         executor.validate_request(request)
+
+
+
+def test_workspace_grant_cannot_authorize_arbitrary_process_targets(tmp_path) -> None:
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="automation.execute",
+            action="automation.execute",
+            resource=str(tmp_path),
+        )
+    )
+    executor = AutomationExecutor(
+        approved_roots=[str(tmp_path)],
+        allowed_executables={sys.executable},
+        permission_gateway=gateway,
+    )
+    request = ExecutionRequest(
+        executable=sys.executable,
+        args=["-c", "print('approved')"],
+        working_dir=str(tmp_path),
+        idempotency=IdempotencyClass.NON_IDEMPOTENT,
+    )
+    with pytest.raises(PermissionError):
+        executor.execute(request)
+
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="automation.execute",
+            action="automation.execute",
+            resource="*",
+        )
+    )
+    assert executor.execute(request).exit_code == 0
