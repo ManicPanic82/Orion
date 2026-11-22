@@ -307,6 +307,7 @@ def test_feedback_and_nested_action_data_are_redacted() -> None:
     assert stored.metadata["nested"]["token"] == "[REDACTED]"
     assert stored.actions[0].input["nested"]["token"] == "[REDACTED]"
     assert stored.feedback[0].content == "[REDACTED]"
+    recorder.review_privacy(experience.experience_id, PrivacyState.APPROVED)
     recorder.add_feedback(experience.experience_id, "later-feedback-secret")
     assert recorder.get(experience.experience_id).feedback[-1].content == "[REDACTED]"
     exported = json.dumps(recorder.export(), sort_keys=True)
