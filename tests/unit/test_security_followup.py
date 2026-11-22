@@ -8,6 +8,7 @@ import threading
 import pytest
 
 from orion.agent import ResidentAgent
+from orion.automation import AutomationExecutor
 from orion.agent.models import PlannedStep
 from orion.capabilities.executor import CapabilityExecutor
 from orion.capabilities.models import Capability, IdempotencyClass
@@ -674,3 +675,17 @@ def test_grant_cannot_be_redirected_by_symlink_created_after_approval(tmp_path) 
         idempotency="non_idempotent",
     )
     assert decision.decision is PermissionDecision.DENY
+
+
+
+def test_automation_allowlists_cannot_be_mutated_after_construction(tmp_path) -> None:
+    executor = AutomationExecutor(
+        approved_roots=[str(tmp_path)],
+        allowed_executables={"python.exe"},
+    )
+    with pytest.raises(AttributeError):
+        executor.allowed_executables.add("cmd.exe")
+    with pytest.raises(AttributeError):
+        executor.approved_roots = ("C:/",)
+    with pytest.raises(AttributeError):
+        executor.permission_gateway = PermissionGateway()
