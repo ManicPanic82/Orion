@@ -377,14 +377,23 @@ def test_evaluation_cannot_accept_caller_supplied_pass_result() -> None:
 
 
 def test_empty_grant_selectors_do_not_mean_global_access() -> None:
-    grant = PermissionGrant()
-    assert not grant.matches(
-        "write_file",
-        "/etc/passwd",
-        action="delete",
-        scope="global",
-        args={"path": "/etc/passwd"},
-    )
+    grants = [
+        PermissionGrant(action="delete", scope="global", resource="*"),
+        PermissionGrant(
+            capability_id="write_file", scope="global", resource="*"
+        ),
+        PermissionGrant(
+            capability_id="write_file", action="delete", resource="*"
+        ),
+    ]
+    for grant in grants:
+        assert not grant.matches(
+            "write_file",
+            "/etc/passwd",
+            action="delete",
+            scope="global",
+            args={"path": "/etc/passwd"},
+        )
 
 
 
