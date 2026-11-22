@@ -163,21 +163,15 @@ class TaskManager:
 
     def recover_task(self, task_id: str) -> Task:
         task = self._repository.get(task_id)
-        # Only resume if recovery_safe and no non-idempotent ambiguity.
-        if not task.recovery_safe:
-            return task
-        # Reset running steps to pending for safe/idempotent steps.
-        for step in task.steps:
-            if step.state is TaskStepState.RUNNING:
-                if step.idempotency in {IdempotencyClass.READ_ONLY, IdempotencyClass.IDEMPOTENT}:
-                    step.state = TaskStepState.PENDING
-                else:
-                    task.recovery_safe = False
+        # A persisted RUNNING step has an ambiguous outcome after a process
+        # restart. Its stored idempotency label may be stale or planner-supplied,
+        # so never replay it automatically at this layer.
+        if any(step.state is TaskStepState.RUNNING for step in task.steps):
+            task.recovery_safe = False
         if task.recovery_safe and task.state in {TaskState.RUNNING, TaskState.PAUSED}:
             task.state = TaskState.PAUSED
         elif not task.recovery_safe:
-            # Never resume a task whose in-flight side effect has an ambiguous
-            # outcome. Keep it paused for explicit user reconciliation.
+            # Keep ambiguous in-flight work paused for explicit reconciliation.
             task.state = TaskState.PAUSED
             task.failure_code = "unsafe_recovery_requires_review"
         self._repository.save(task)
