@@ -83,6 +83,9 @@ class PermissionGrant:
                 return False
         if self.action and self.action != action:
             return False
+        # A grant with no scope must not satisfy a scoped capability.
+        if scope and self.scope != scope:
+            return False
         if self.scope and self.scope != scope:
             return False
 
