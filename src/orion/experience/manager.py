@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import threading
 from typing import Any
 
@@ -47,8 +48,12 @@ class ExperienceRecorder:
         self.last_error: str | None = None
 
     def _save(self, exp: Experience) -> None:
+        snapshot = copy.deepcopy(exp)
         if self.store is not None:
-            self.store.save(exp)
+            self.store.save(snapshot)
+        else:
+            with self._lock:
+                self._experiences[exp.experience_id] = snapshot
 
     def _discard(self, experience_id: str) -> bool:
         if self.store is not None:
@@ -96,11 +101,8 @@ class ExperienceRecorder:
                 metadata=dict(metadata or {}),
             )
             self._save(exp)
-            if self.store is None:
-                with self._lock:
-                    self._experiences[exp.experience_id] = exp
             self.last_error = None
-            return exp
+            return copy.deepcopy(exp)
         except Exception as exc:
             self.last_error = str(exc)
             return None
@@ -150,15 +152,16 @@ class ExperienceRecorder:
 
     def get(self, experience_id: str) -> Experience | None:
         if self.store is not None:
-            return self.store.get(experience_id)
+            experience = self.store.get(experience_id)
+            return copy.deepcopy(experience)
         with self._lock:
-            return self._experiences.get(experience_id)
+            return copy.deepcopy(self._experiences.get(experience_id))
 
     def list_experiences(self) -> list[Experience]:
         if self.store is not None:
-            return self.store.list()
+            return copy.deepcopy(self.store.list())
         with self._lock:
-            return list(self._experiences.values())
+            return [copy.deepcopy(experience) for experience in self._experiences.values()]
 
     def add_feedback(
         self,
@@ -186,7 +189,7 @@ class ExperienceRecorder:
             exp.feedback.append(fb)
             # A correction does not change original outcome, but marks corrected if requested.
         self._save(exp)
-        return fb
+        return copy.deepcopy(fb)
 
     def mark_corrected(self, experience_id: str) -> Experience:
         exp = self.get(experience_id)
