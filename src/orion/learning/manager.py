@@ -111,7 +111,7 @@ class LearningManager:
         dataset_id = metrics.get("dataset_id")
         with self._lock:
             dataset = self._datasets.get(dataset_id) if isinstance(dataset_id, str) else None
-        if dataset is None or not dataset.eval_ids:
+        if dataset is None or not dataset.eval_ids or not dataset.train_ids:
             raise ValueError("evaluation must reference a registered dataset with an eval split")
         if metrics.get("eval_dataset_checksum") != dataset.checksum:
             raise ValueError("evaluation dataset checksum does not match the registered dataset")
@@ -169,6 +169,7 @@ class LearningManager:
         if (
             dataset is None
             or not dataset.eval_ids
+            or not dataset.train_ids
             or metrics.get("held_out") is not True
             or metrics.get("eval_dataset_checksum") != dataset.checksum
         ):
