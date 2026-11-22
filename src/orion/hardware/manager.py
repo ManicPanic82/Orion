@@ -119,6 +119,10 @@ class HardwareManager:
                     memory_bytes = int(item.get("AdapterRAM") or 0)
                 except (TypeError, ValueError):
                     memory_bytes = 0
+                # Win32_VideoController.AdapterRAM is a 32-bit field; a
+                # 4-GiB value is commonly a saturation marker, not real VRAM.
+                if memory_bytes >= 4 * 1024**3:
+                    memory_bytes = 0
             else:
                 continue
             if name:
