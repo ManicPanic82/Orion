@@ -59,9 +59,8 @@ class PermissionGateway:
     def add_grant(self, grant: PermissionGrant) -> PermissionGrant:
         with self._lock:
             stored = copy.deepcopy(grant)
-            if not stored.resource_is_canonical:
-                stored.resource = canonicalize_resource(stored.resource)
-                stored.resource_is_canonical = True
+            stored.resource = canonicalize_resource(stored.resource)
+            stored.resource_is_canonical = True
             self._grants[stored.grant_id] = stored
             return copy.deepcopy(stored)
 
