@@ -158,7 +158,11 @@ class CoreSupervisor:
         """Request graceful child shutdown, escalating to kill after a grace period."""
         terminate = getattr(child, "terminate", None)
         if not callable(terminate):
-            return
+            kill = getattr(child, "kill", None)
+            if callable(kill):
+                kill()
+                return
+            raise RuntimeError("supervised child does not support terminate or kill")
         try:
             terminate()
             try:
