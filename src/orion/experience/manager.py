@@ -170,6 +170,17 @@ class ExperienceRecorder:
         exp = self.get(experience_id)
         if exp is None:
             raise KeyError(f"experience not found: {experience_id}")
+        if exp.privacy_state is PrivacyState.REDACTED:
+            if any(
+                field in exp.redacted_fields
+                for field in ("feedback", "feedback.content", "content")
+            ):
+                content = "[REDACTED]"
+            if any(
+                field in exp.redacted_fields
+                for field in ("feedback", "feedback.author", "author")
+            ):
+                author = "[REDACTED]"
         fb = ExperienceFeedback(content=content, feedback_type=feedback_type, author=author)
         with self._lock:
             exp.feedback.append(fb)
@@ -235,13 +246,23 @@ class ExperienceRecorder:
         exp.privacy_state = PrivacyState.REDACTED
         # Apply the redaction to the stored data, not only to the marker: the
         # dataset builder and any export must never see the original values.
-        _scrub_mapping(exp.metadata, exp.redacted_fields)
+        metadata_fields = exp.redacted_fields + [
+            field.removeprefix("metadata.")
+            for field in exp.redacted_fields
+            if field.startswith("metadata.")
+        ]
+        action_fields = exp.redacted_fields + [
+            field.removeprefix("actions.input.")
+            for field in exp.redacted_fields
+            if field.startswith("actions.input.")
+        ]
+        _scrub_mapping(exp.metadata, metadata_fields)
         for action in exp.actions:
             if "actions" in exp.redacted_fields:
                 action.input = {key: "[REDACTED]" for key in action.input}
                 action.observed_result = "[REDACTED]"
             else:
-                _scrub_mapping(action.input, exp.redacted_fields)
+                _scrub_mapping(action.input, action_fields)
                 if "observed_result" in exp.redacted_fields:
                     action.observed_result = "[REDACTED]"
         for feedback in exp.feedback:
