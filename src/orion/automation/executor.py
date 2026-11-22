@@ -120,7 +120,9 @@ class AutomationExecutor:
         executable_key = os.path.normcase(request.executable)
         resolved_executable = self._resolved_executables.get(executable_key)
         if resolved_executable is None:
-            raise ValueError(f"executable is not allowlisted or could not be resolved: {request.executable}")
+            raise ValueError(
+                f"executable is not allowlisted or could not be resolved: {request.executable}"
+            )
         try:
             current_executable = Path(resolved_executable).resolve(strict=True)
         except (OSError, RuntimeError) as exc:
