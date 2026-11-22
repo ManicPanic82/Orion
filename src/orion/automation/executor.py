@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from orion.automation.models import ExecutionRequest, ExecutionResult, IdempotencyClass
-from orion.automation.workspace import ensure_within_roots, redact_text
+from orion.automation.workspace import PathEscapeError, redact_text
 
 # Deterministic read-only commands: (allowed executable names, argument prefix).
 # This allowlist is the *only* way a request is classified as read-only without a
@@ -68,17 +68,23 @@ class AutomationExecutor:
     def permission_gateway(self) -> Any:
         return self._permission_gateway
 
-    def validate_request(self, request: ExecutionRequest) -> None:
+    def validate_request(self, request: ExecutionRequest) -> Path | None:
         if not self._allowed_executables:
             raise ValueError("AutomationExecutor requires an allowed_executables allowlist")
         if request.executable not in self._allowed_executables:
             raise ValueError(f"executable not allowed: {request.executable}")
         if not self._approved_roots:
             raise ValueError("AutomationExecutor requires approved_roots")
-        if request.working_dir:
-            ensure_within_roots(request.working_dir, self._approved_roots)
+        if not request.working_dir:
+            return None
+        resolved = Path(request.working_dir).resolve(strict=False)
+        if not any(resolved.is_relative_to(root) for root in self._approved_roots):
+            raise PathEscapeError(f"path {resolved} is outside approved roots")
+        return resolved
 
-    def _permission_check(self, request: ExecutionRequest) -> None:
+    def _permission_check(
+        self, request: ExecutionRequest, working_dir: Path | None
+    ) -> None:
         effective = classify_request(request)
         if effective is IdempotencyClass.READ_ONLY:
             # Deterministically allowlisted read-only command, no gateway needed.
@@ -88,7 +94,7 @@ class AutomationExecutor:
             raise PermissionError("permission gateway unavailable")
         decision = self._permission_gateway.decide(
             "automation.execute",
-            request.working_dir or "",
+            str(working_dir) if working_dir is not None else "",
             idempotency=effective.value,
             task_id=request.task_id,
             args={"executable": request.executable, "args": request.args},
@@ -101,12 +107,12 @@ class AutomationExecutor:
             )
 
     def execute(self, request: ExecutionRequest, *, cancel_event: Any = None) -> ExecutionResult:
-        self.validate_request(request)
+        working_dir = self.validate_request(request)
         if request.dry_run:
             return ExecutionResult(
                 request_id=request.request_id, exit_code=0, stdout="dry run", stderr=""
             )
-        self._permission_check(request)
+        self._permission_check(request, working_dir)
 
         result = ExecutionResult(request_id=request.request_id)
         start = time.monotonic()
@@ -129,7 +135,7 @@ class AutomationExecutor:
         try:
             proc = subprocess.Popen(
                 [request.executable, *request.args],
-                cwd=request.working_dir or None,
+                cwd=str(working_dir) if working_dir is not None else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env={**os.environ, **request.env} if request.env else None,
