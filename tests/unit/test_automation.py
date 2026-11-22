@@ -13,7 +13,9 @@ from orion.permissions import AutonomyMode, PermissionGateway, PermissionGrant
 def _executor_for(td: str, **kwargs: object) -> AutomationExecutor:
     """Executor with mandatory restrictions + an allowing gateway."""
     gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gateway.add_grant(PermissionGrant(capability_id="automation.execute", action="automation.execute", resource="*"))
+    gateway.add_grant(
+        PermissionGrant(capability_id="automation.execute", action="automation.execute", resource="*")
+    )
     return AutomationExecutor(
         approved_roots=[td],
         allowed_executables={sys.executable, "git.exe", "git", "powershell.exe"},
