@@ -453,3 +453,18 @@ def test_capability_registry_does_not_expose_mutable_security_metadata() -> None
     returned = registry.get("write_file")
     returned.idempotency = IdempotencyClass.READ_ONLY
     assert registry.get("write_file").idempotency is IdempotencyClass.NON_IDEMPOTENT
+
+
+
+def test_in_memory_task_repository_does_not_expose_mutable_records() -> None:
+    manager = TaskManager(repository=InMemoryTaskRepository())
+    step = TaskStep(
+        capability_id="write_file",
+        idempotency=TaskIdempotency.NON_IDEMPOTENT,
+    )
+    task = manager.create_task(manager.create_objective("write"), steps=[step])
+    task.steps[0].idempotency = TaskIdempotency.READ_ONLY
+    loaded = manager.get_task(task.task_id)
+    assert loaded.steps[0].idempotency is TaskIdempotency.NON_IDEMPOTENT
+    loaded.steps[0].idempotency = TaskIdempotency.READ_ONLY
+    assert manager.get_task(task.task_id).steps[0].idempotency is TaskIdempotency.NON_IDEMPOTENT
