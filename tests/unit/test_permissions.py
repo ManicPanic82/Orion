@@ -197,9 +197,14 @@ def test_grant_enforces_action_constraint() -> None:
 
 def test_grant_enforces_scope_constraint() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(PermissionGrant(
-            capability_id="write_file", action="write_file", resource="/tmp/x", scope="global"
-        ))
+    gw.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            action="write_file",
+            resource="/tmp/x",
+            scope="global",
+        )
+    )
     dec_ok = gw.decide("write_file", "/tmp/x", scope="global", idempotency="non_idempotent")
     assert dec_ok.decision is PermissionDecision.ALLOW
     dec_bad = gw.decide("write_file", "/tmp/x", scope="project", idempotency="non_idempotent")
