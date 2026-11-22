@@ -55,9 +55,22 @@ class ResidentAgent:
             from orion.tasks.models import TaskStep
 
             try:
-                idem = IdempotencyClass(ps.idempotency)
-            except ValueError:
-                idem = IdempotencyClass.READ_ONLY
+                planned_idempotency = IdempotencyClass(ps.idempotency)
+            except (ValueError, TypeError):
+                # Unknown planner classifications are never treated as safe
+                # for crash recovery.
+                planned_idempotency = IdempotencyClass.NON_IDEMPOTENT
+            try:
+                registered = self.registry.get(ps.capability_id)
+            except KeyError:
+                raise ValueError(f"planner selected unregistered capability: {ps.capability_id}")
+            # The registry is application-controlled and authoritative. A
+            # planner may make recovery more conservative, never less safe.
+            idem = (
+                IdempotencyClass.NON_IDEMPOTENT
+                if planned_idempotency is IdempotencyClass.NON_IDEMPOTENT
+                else registered.idempotency
+            )
             task_steps.append(
                 TaskStep(
                     task_id="",
