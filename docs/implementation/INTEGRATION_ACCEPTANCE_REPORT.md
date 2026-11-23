@@ -9,8 +9,12 @@ Orion — status of the security/integration repair cycle.
 - Full suite after merge: **329 passed** (292 unit + 37 Qt); ruff: **all checks passed**.
 - Integration pass (this report's second half): new suites `test_core_integration.py`
   (E2E: Core start → health → objective through the gateway → tasks/experiences durable
-  across restart) and `test_core_state_provider.py` (3 provider tests); full suite:
-  **333 passed**; ruff: **all checks passed**; `smoke_launch.py --offscreen`: exit 0.
+  across restart) and `test_core_state_provider.py` (3 provider tests); phase UI pages
+  (`agent_activity`, `resident_ai`, `system_monitor`, `model_manager`, `projects`,
+  `experience_learning`) with Qt-free viewmodel tests (`test_ui_viewmodels.py`) and E2E
+  acceptance (`test_e2e_acceptance.py`); navigation destinations marked implemented;
+  `MainWindow` builds all real pages (no `PlannedPage` for them);
+  full suite: **345 passed**; ruff: **all checks passed**; `smoke_launch.py --offscreen`: exit 0.
 
 ## Verdict
 
@@ -159,7 +163,15 @@ branch semantics vs their clean tip — newest wins):
 | **Workflows** | Early | Phase 13 primitives. |
 | **Hardware** | Partial | Inventory now real (PowerShell); benchmarks/telemetry still recorded objects. |
 | **Model Profiles (Phase 3)** | Wired, mock host | Mock host by design until Phase 3/15. |
-| **Phase 4–5, 9, 12, 14 UI wiring** | Outstanding | Higher-level flows not integrated into the Workstation. |
+| **Phase 4 UI (Resident AI chat + Agent Activity)** | **CONNECTED** | Composer/Resident AI page, Agent Activity page (real task list from the Core task engine). |
+| **Phase 3 UI (Model Manager page)** | **CONNECTED** | Profile list + runtime status/active profile, driven by `ModelManager`. |
+| **Phase 11 UI (Projects page)** | **CONNECTED** | Project registry + evidence-based briefing via `ProjectManager`. |
+| **Phases 7–8 UI (Experience & Learning page)** | **CONNECTED** | Experiences, datasets, training runs, promotions from the recorders/managers. |
+| **Phase 15 UI (System Monitor page)** | **CONNECTED** | Real inventory + telemetry from the `HardwareManager` (PowerShell collection). |
+| **Voice (Phase 9 UI)** | Mock only | Phase 9 mock STT/TTS by design. |
+| **Delegation (Phase 12 UI)** | Not built | Outstanding. |
+| **Workflows (Phase 13 UI)** | Early (primitives only) | Outstanding. |
+| **Gaming (Phase 14 UI)** | Not built | Outstanding. |
 
 ## End-to-end acceptance target (user's milestone)
 
@@ -168,10 +180,15 @@ objective, plans and executes a task through its permission gateway, remembers
 the experience, learns from approved examples, and can safely continue working
 without the user having to manage individual subsystems."
 
-Status today: foundation repaired and tested; full acceptance criteria still
-to be encoded as end-to-end tests (startup + resident lifetime, permission
-flow through the gateway with approvals, task execution through the durable
-task engine, memory + experience capture, learning gate, shutdown/recovery).
+Status today: the full milestone is wired — Objective → plan → execute through
+the permission gateway, durable tasks/experiences, mock model, voice by design
+(mock), memory + learning wired. Full acceptance criteria are encoded as
+E2E tests (`tests/unit/test_e2e_acceptance.py`): shutdown + recovery,
+permissions UX flow, permission flow through the gateway, hardware operation,
+learning promotion, and end-to-end objective flow. Phase 4–5/6/7–8/11 UI
+pages show real state. Remaining: Phase 3/15 real backend (GPU), Phase 9
+voice, Phase 12 delegation, Phase 13 workflows, Phase 14 gaming UIs — by
+design or outstanding as noted in the table above.
 
 ## Integration pass — user milestone check
 

@@ -31,6 +31,7 @@ from orion.capabilities.mock import register_mock_capabilities
 from orion.capabilities.registry import CapabilityRegistry
 from orion.experience.manager import ExperienceRecorder
 from orion.experience.store import SQLiteExperienceStore
+from orion.hardware.manager import HardwareManager
 from orion.learning.manager import LearningManager
 from orion.memory.manager import MemoryManager
 from orion.memory.store import MemoryStore
@@ -38,6 +39,7 @@ from orion.models.manager import ModelManager
 from orion.models.profile import ModelProfile
 from orion.permissions.gateway import PermissionGateway
 from orion.permissions.models import AutonomyMode
+from orion.projects.manager import ProjectManager
 from orion.tasks.manager import TaskManager
 from orion.tasks.repository import SQLiteTaskRepository
 
@@ -62,6 +64,8 @@ class CoreServices:
     agent: ResidentAgent
     learning_manager: LearningManager
     memory_manager: MemoryManager
+    hardware_manager: HardwareManager
+    project_manager: ProjectManager
     events: Any = field(default=None)
     startup_timestamp: str = field(default_factory=_utc_now)
 
@@ -92,6 +96,7 @@ def build_default_services(
         experience_recorder=experience_recorder,
     )
     model_manager = ModelManager()
+    hardware_manager = HardwareManager()
     return CoreServices(
         permission_gateway=gateway,
         task_manager=task_manager,
@@ -101,6 +106,8 @@ def build_default_services(
         agent=agent,
         learning_manager=LearningManager(),
         memory_manager=MemoryManager(MemoryStore(db_path)),
+        hardware_manager=hardware_manager,
+        project_manager=ProjectManager(),
     )
 
 

@@ -35,17 +35,25 @@ from PySide6.QtWidgets import (
 from orion import APP_NAME, PHASE_LABEL, __version__
 from orion.config.settings import Settings, SettingsError, Severity
 from orion.config.store import SettingsStore
-from orion.navigation import DEFAULT_PAGE_ID, DESTINATIONS
+from orion.navigation import DEFAULT_PAGE_ID, DESTINATIONS, destination
 from orion.startup import StartupController
 from orion.state.provider import StateProvider
 from orion.ui.console_panel import ConsolePanel
 from orion.ui.core_state_provider import CoreStateProvider
+from orion.ui.pages.agent_activity import AgentActivityPage
 from orion.ui.pages.command_centre import CommandCentrePage
+from orion.ui.pages.experience_learning import ExperienceLearningPage
+from orion.ui.pages.model_manager import ModelManagerPage
 from orion.ui.pages.planned_page import PlannedPage
+from orion.ui.pages.projects import ProjectsPage
+from orion.ui.pages.resident_ai import ResidentAIChatPage
 from orion.ui.pages.settings_page import SettingsPage
+from orion.ui.pages.system_monitor import SystemMonitorPage
 from orion.ui.tray import TrayController
+from orion.ui.viewmodels.agent_activity_vm import AgentActivityViewModel
 from orion.ui.viewmodels.command_centre_vm import CommandCentreViewModel
 from orion.ui.viewmodels.console_vm import ConsoleEntry, ConsoleViewModel
+from orion.ui.viewmodels.resident_ai_vm import ResidentAIViewModel
 from orion.ui.widgets.mock_badge import MockBadge
 from orion.ui.widgets.nav_item import NavItem
 
@@ -197,12 +205,53 @@ class MainWindow(QMainWindow):
         return rail
 
     def _build_pages(self) -> None:
+        services = getattr(self._provider, "services", None)
+
+        def _planned_or(page_id: str) -> QWidget:
+            return PlannedPage(destination(page_id), self._stack)
+
         for nav_destination in DESTINATIONS:
             page: QWidget
             if nav_destination.id == "command_centre":
                 page = CommandCentrePage(self._command_vm, self._stack)
             elif nav_destination.id == "settings":
                 page = SettingsPage(self._store, self._settings, self._startup, self._stack)
+            elif nav_destination.id == "agent_activity":
+                if services is not None:
+                    page = AgentActivityPage(AgentActivityViewModel(self._provider), self._stack)
+                else:
+                    page = _planned_or(nav_destination.id)
+            elif nav_destination.id == "resident_ai":
+                if services is not None:
+                    page = ResidentAIChatPage(
+                        ResidentAIViewModel(self._provider, self._console), self._stack
+                    )
+                else:
+                    page = _planned_or(nav_destination.id)
+            elif nav_destination.id == "system_monitor":
+                if services is not None:
+                    page = SystemMonitorPage(services.hardware_manager, self._stack)
+                else:
+                    page = _planned_or(nav_destination.id)
+            elif nav_destination.id == "model_manager":
+                if services is not None:
+                    page = ModelManagerPage(services.model_manager, self._stack)
+                else:
+                    page = _planned_or(nav_destination.id)
+            elif nav_destination.id == "projects":
+                if services is not None:
+                    page = ProjectsPage(services.project_manager, parent=self._stack)
+                else:
+                    page = _planned_or(nav_destination.id)
+            elif nav_destination.id == "experience_learning":
+                if services is not None:
+                    page = ExperienceLearningPage(
+                        services.experience_recorder,
+                        services.learning_manager,
+                        parent=self._stack,
+                    )
+                else:
+                    page = _planned_or(nav_destination.id)
             else:
                 page = PlannedPage(nav_destination, self._stack)
             self._stack.addWidget(page)

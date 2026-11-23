@@ -62,6 +62,16 @@ class CoreStateProvider:
     # -- StateProvider protocol -------------------------------------------
 
     @property
+    def core(self) -> OrionCore:
+        """The embedded Core facade that backs this provider."""
+        return self._core
+
+    @property
+    def services(self):  # noqa: ANN201 - services.CoreServices
+        """The composed Core services (same as ``core.services``)."""
+        return self._core.services
+
+    @property
     def is_mock(self) -> bool:
         return False
 
