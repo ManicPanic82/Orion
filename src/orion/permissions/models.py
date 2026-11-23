@@ -2,30 +2,49 @@
 
 from __future__ import annotations
 
+import contextlib
 import ntpath
 import os
-import re
+import posixpath
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 POLICY_VERSION = "1.0"
 
 
-def _canonical_resource(value: str) -> str:
-    """Canonicalise filesystem-like resources before comparing grant scopes."""
-    if not value or "://" in value:
+def _normalise_resource_path(value: str, *, resolve: bool = True) -> tuple[str, str]:
+    if "://" in value:
+        return posixpath.normpath(value), "/"
+    is_windows_path = bool(ntpath.splitdrive(value)[0]) or "\\" in value
+    if is_windows_path and os.name != "nt":
+        return ntpath.normcase(ntpath.normpath(value)), "\\"
+    if resolve:
+        with contextlib.suppress(OSError, RuntimeError):
+            value = str(Path(value).resolve(strict=False))
+    if ntpath.splitdrive(value)[0] or "\\" in value:
+        return ntpath.normcase(ntpath.normpath(value)), "\\"
+    return posixpath.normpath(value), "/"
+
+
+def canonicalize_resource(value: str) -> str:
+    """Pin a grant/approval resource to its canonical path at creation time."""
+    if value == "*":
         return value
-    is_windows_path = bool(re.match(r"^[A-Za-z]:[\\/]", value)) or value.startswith("\\\\")
-    if is_windows_path:
-        if os.name == "nt":
-            return os.path.normcase(os.path.realpath(value))
-        return ntpath.normcase(ntpath.normpath(value))
-    if value.startswith(("/", "./", "../")):
-        return os.path.normcase(os.path.realpath(value))
-    return value
+    wildcard = value.endswith("*")
+    root = value[:-1].rstrip("/\\") if wildcard else value
+    if wildcard and not root:
+        return "/*"
+    drive, tail = ntpath.splitdrive(root)
+    if wildcard and drive and not tail:
+        root = drive + "\\"
+    normalised, separator = _normalise_resource_path(root)
+    if wildcard:
+        return normalised.rstrip("/\\") + separator + "*"
+    return normalised
 
 
 class AutonomyMode(StrEnum):
@@ -62,6 +81,7 @@ class PermissionGrant:
     revoked: bool = False
     constraints: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    resource_is_canonical: bool = False
 
     def is_active(self, now: datetime | None = None) -> bool:
         if self.revoked:
@@ -70,8 +90,11 @@ class PermissionGrant:
             return True
         now = now or datetime.now(UTC)
         try:
-            return datetime.fromisoformat(self.expires_at) > now
-        except ValueError:
+            expiry = datetime.fromisoformat(self.expires_at)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=UTC)
+            return expiry > now
+        except (TypeError, ValueError, OverflowError):
             return False
 
     def matches(
@@ -83,45 +106,74 @@ class PermissionGrant:
         scope: str = "",
         args: dict[str, Any] | None = None,
     ) -> bool:
-        if self.capability_id and self.capability_id != capability_id:
+        """Match a grant against the complete request context.
+
+        Resource wildcards are segment-aware. Constraints are exact argument
+        predicates using dotted paths; malformed or unknown constraints fail closed.
+        """
+        if self.capability_id not in ("*", capability_id):
             return False
-        if self.resource and self.resource not in ("*", ""):
-            if self.resource.endswith("*"):
-                prefix = _canonical_resource(self.resource[:-1])
-                target = _canonical_resource(resource)
-                # Resolve dot segments and symlinks before applying a
-                # separator-aware containment check.
-                if not target.startswith(prefix):
-                    return False
-                if prefix and len(target) > len(prefix) and target[len(prefix)] not in ("/", "\\"):
-                    return False
-            elif _canonical_resource(self.resource) != _canonical_resource(resource):
-                return False
-        if self.action and self.action != action:
+        if self.action not in ("*", action):
             return False
-        # A grant with no scope must not satisfy a scoped capability.
-        if scope and self.scope != scope:
-            return False
-        if self.scope and self.scope != scope:
+        if self.scope not in ("*", scope):
             return False
 
-        # Constraints intentionally support a small, explicit schema.
-        # Unknown keys or malformed values fail closed rather than silently
-        # weakening a grant.
-        constraints = self.constraints or {}
-        if not isinstance(constraints, dict):
-            return False
-        if set(constraints) - {"required_args", "allowed_args"}:
+        granted = self.resource
+        requested = resource
+        if granted != "*":
+            wildcard = granted.endswith("*")
+            if wildcard:
+                granted = granted[:-1].rstrip("/\\")
+            normalised_grant, separator = _normalise_resource_path(
+                granted, resolve=not self.resource_is_canonical
+            )
+            normalised_request, _ = _normalise_resource_path(requested)
+            if wildcard:
+                if normalised_request != normalised_grant and not normalised_request.startswith(
+                    normalised_grant + separator
+                ):
+                    return False
+            elif normalised_grant != normalised_request:
+                return False
+
+        if not isinstance(self.constraints, dict):
             return False
         request_args = args or {}
-        required = constraints.get("required_args", {})
-        allowed = constraints.get("allowed_args", {})
-        if not isinstance(required, dict) or not isinstance(allowed, dict):
-            return False
-        if any(key not in request_args or request_args[key] != value for key, value in required.items()):
-            return False
-        for key, values in allowed.items():
-            if not isinstance(values, list) or key not in request_args or request_args[key] not in values:
+        for key, expected in self.constraints.items():
+            if not isinstance(key, str) or not key:
+                return False
+            if key == "required_args":
+                # Repair-pass schema: exact required argument matches.
+                if not isinstance(expected, dict):
+                    return False
+                for arg_key, value in expected.items():
+                    if (
+                        not isinstance(arg_key, str)
+                        or arg_key not in request_args
+                        or request_args[arg_key] != value
+                    ):
+                        return False
+                continue
+            if key == "allowed_args":
+                # Repair-pass schema: argument values drawn from a whitelist.
+                if not isinstance(expected, dict):
+                    return False
+                for arg_key, values in expected.items():
+                    if (
+                        not isinstance(values, list)
+                        or not isinstance(arg_key, str)
+                        or arg_key not in request_args
+                        or request_args[arg_key] not in values
+                    ):
+                        return False
+                continue
+            # Dotted-path exact assertion over the request args (their schema).
+            current: Any = request_args
+            for part in key.split("."):
+                if not isinstance(current, dict) or part not in current:
+                    return False
+                current = current[part]
+            if current != expected:
                 return False
         return True
 
@@ -131,6 +183,7 @@ class PermissionGrant:
             "capability_id": self.capability_id,
             "action": self.action,
             "resource": self.resource,
+            "resource_is_canonical": self.resource_is_canonical,
             "scope": self.scope,
             "persistent": self.persistent,
             "expires_at": self.expires_at,
@@ -166,8 +219,11 @@ class ApprovalRequest:
             return False
         now = now or datetime.now(UTC)
         try:
-            return datetime.fromisoformat(self.expires_at) <= now
-        except ValueError:
+            expiry = datetime.fromisoformat(self.expires_at)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=UTC)
+            return expiry <= now
+        except (TypeError, ValueError, OverflowError):
             return True
 
     def as_dict(self) -> dict[str, Any]:

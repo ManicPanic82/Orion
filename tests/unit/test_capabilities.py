@@ -42,15 +42,30 @@ def test_permission_denied_for_side_effect_without_gateway() -> None:
     assert result["success"] is False
     assert result["error_code"] == "permission_unavailable"
 
+
 def test_unclassified_capability_defaults_to_non_idempotent() -> None:
     from orion.capabilities.models import Capability, IdempotencyClass
 
-    capability = Capability(capability_id="custom_side_effect")
+    # Their clean tip: side-effecting capabilities must declare resource_fields;
+    # the default classification is NON_IDEMPOTENT.
+    capability = Capability(capability_id="custom_side_effect", resource_fields=["*"])
     assert capability.idempotency is IdempotencyClass.NON_IDEMPOTENT
+    try:
+        Capability(capability_id="custom_side_effect")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "side-effecting capability without resource_fields should fail validation"
+        )
 
 
 def test_required_scope_is_passed_to_permission_gateway() -> None:
-    from orion.permissions import AutonomyMode, PermissionDecision, PermissionGateway, PermissionGrant
+    from orion.permissions import (
+        AutonomyMode,
+        PermissionGateway,
+        PermissionGrant,
+    )
     from orion.tasks.models import TaskStep
 
     registry = CapabilityRegistry()
@@ -90,6 +105,7 @@ def test_side_effecting_capability_without_gateway_is_denied_by_default() -> Non
     registry.register(
         Capability(
             capability_id="custom",
+            resource_fields=["*"],
             handler=lambda args, **kwargs: called.append(True),
         )
     )
@@ -99,6 +115,7 @@ def test_side_effecting_capability_without_gateway_is_denied_by_default() -> Non
     assert result["success"] is False
     assert result["error_code"] == "permission_unavailable"
     assert called == []
+
 
 def test_read_only_capability_with_required_scope_needs_grant() -> None:
     from orion.capabilities.models import Capability, IdempotencyClass

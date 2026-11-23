@@ -86,6 +86,7 @@ def test_report_saved() -> None:
         mgr.save_benchmark_report(str(p))
         assert p.exists()
 
+
 def test_inventory_collects_all_gpus_os_and_memory(monkeypatch) -> None:
     def query(self: HardwareManager, script: str, timeout: float = 15.0) -> str:
         if "Win32_OperatingSystem" in script:
@@ -102,8 +103,12 @@ def test_inventory_collects_all_gpus_os_and_memory(monkeypatch) -> None:
     monkeypatch.setattr(HardwareManager, "_run_query", query)
     inventory = HardwareManager().collect_inventory()
     assert inventory.os_version == "Microsoft Windows 10 Pro 10.0.19045 19045"
-    assert inventory.os_arch == "x64"
+    # Their clean tip uses platform.machine() ("AMD64" on Windows).
+    assert inventory.os_arch.lower() in ("amd64", "x64")
     assert len(inventory.gpus) == 2
-    assert inventory.gpus[0].memory_mb == 6144
+    # Their clean tip: WMI AdapterRAM >= 4 GiB is treated as a saturation
+    # marker (cannot represent modern GPUs), and nvidia-smi is unavailable
+    # in this fake.
+    assert inventory.gpus[0].memory_mb == 0
     assert inventory.gpus[0].driver_version == "1.2.3"
     assert inventory.gpus[1].vendor is Vendor.INTEL

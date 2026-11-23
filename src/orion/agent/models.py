@@ -13,7 +13,7 @@ class PlannedStep:
     capability_id: str = ""
     input: dict[str, Any] = field(default_factory=dict)
     expected_outcome: str = ""
-    idempotency: str = "read_only"
+    idempotency: str = "non_idempotent"
     timeout_s: float = 30.0
 
     def as_dict(self) -> dict[str, Any]:

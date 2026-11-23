@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -10,15 +11,34 @@ from pathlib import Path
 from typing import Any
 
 from orion.automation.models import ExecutionRequest, ExecutionResult, IdempotencyClass
-from orion.automation.workspace import ensure_within_roots, redact_text
+from orion.automation.workspace import PathEscapeError, redact_text
 
 # Deterministic read-only commands: (allowed executable names, argument prefix).
 # This allowlist is the *only* way a request is classified as read-only without a
 # permission gateway. It is owned by this module, never by the model supplying
 # the request.
+_PROTECTED_ENV_KEYS = frozenset(
+    {
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES",
+        "GIT_PAGER",
+        "PAGER",
+        "GIT_OPTIONAL_LOCKS",
+        "GIT_CONFIG_NOSYSTEM",
+    }
+)
+
+
 _DETERMINISTIC_READ_ONLY_COMMANDS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     (frozenset({"git.exe", "git"}), ("status",)),
-    (frozenset({"git.exe", "git"}), ("log",)),
 )
 
 
@@ -47,36 +67,113 @@ class AutomationExecutor:
         permission_gateway: Any = None,
         allowed_executables: set[str] | None = None,
     ) -> None:
-        # Mandatory restrictions: an executor without them is unusable.
-        self.approved_roots = list(approved_roots or [])
-        self.permission_gateway = permission_gateway
-        self.allowed_executables = set(allowed_executables or set())
+        # Mandatory restrictions are immutable after construction. Resolve
+        # roots once so a later symlink replacement cannot widen the workspace.
+        self._approved_roots = tuple(
+            Path(root).resolve(strict=False) for root in (approved_roots or [])
+        )
+        self._permission_gateway = permission_gateway
+        configured_executables = frozenset(str(item) for item in (allowed_executables or set()))
+        self._allowed_executables = configured_executables
+        self._resolved_executables: dict[str, str] = {}
+        for configured in configured_executables:
+            resolved = self._resolve_executable(configured)
+            if resolved is not None:
+                self._resolved_executables[os.path.normcase(configured)] = resolved
         self._lock = threading.RLock()
 
-    def validate_request(self, request: ExecutionRequest) -> None:
-        if not self.allowed_executables:
-            raise ValueError("AutomationExecutor requires an allowed_executables allowlist")
-        if request.executable not in self.allowed_executables:
-            raise ValueError(f"executable not allowed: {request.executable}")
-        if not self.approved_roots:
-            raise ValueError("AutomationExecutor requires approved_roots")
-        if request.working_dir:
-            ensure_within_roots(request.working_dir, self.approved_roots)
+    def _resolve_executable(self, configured: str) -> str | None:
+        candidate = Path(configured)
+        try:
+            if candidate.is_absolute():
+                resolved = candidate.resolve(strict=True)
+            else:
+                located = shutil.which(configured)
+                if located is None:
+                    return None
+                resolved = Path(located).resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
+        if not resolved.is_file():
+            return None
+        if not candidate.is_absolute() and any(
+            resolved.is_relative_to(root) for root in self._approved_roots
+        ):
+            return None
+        return str(resolved)
 
-    def _permission_check(self, request: ExecutionRequest) -> None:
+    @property
+    def approved_roots(self) -> tuple[str, ...]:
+        return tuple(str(root) for root in self._approved_roots)
+
+    @property
+    def allowed_executables(self) -> frozenset[str]:
+        return self._allowed_executables
+
+    @property
+    def permission_gateway(self) -> Any:
+        return self._permission_gateway
+
+    def validate_request(self, request: ExecutionRequest) -> tuple[Path, str]:
+        if not self._allowed_executables:
+            raise ValueError("AutomationExecutor requires an allowed_executables allowlist")
+        executable_key = os.path.normcase(request.executable)
+        resolved_executable = self._resolved_executables.get(executable_key)
+        if resolved_executable is None:
+            raise ValueError(
+                f"executable is not allowlisted or could not be resolved: {request.executable}"
+            )
+        try:
+            current_executable = Path(resolved_executable).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError("allowlisted executable is no longer available") from exc
+        if os.path.normcase(str(current_executable)) != os.path.normcase(resolved_executable):
+            raise ValueError("allowlisted executable target changed after configuration")
+        if not current_executable.is_file():
+            raise ValueError("allowlisted executable is no longer a file")
+        protected_overrides = {
+            key.upper()
+            for key in (request.env or {})
+            if key.upper() in _PROTECTED_ENV_KEYS or key.upper().startswith("GIT_")
+        }
+        if protected_overrides:
+            raise ValueError(
+                "environment cannot override executable resolution or code-loading keys: "
+                + ", ".join(sorted(protected_overrides))
+            )
+        if not self._approved_roots:
+            raise ValueError("AutomationExecutor requires approved_roots")
+        requested_root = request.working_dir or str(self._approved_roots[0])
+        resolved = Path(requested_root).resolve(strict=False)
+        if not any(resolved.is_relative_to(root) for root in self._approved_roots):
+            raise PathEscapeError(f"path {resolved} is outside approved roots")
+        return resolved, resolved_executable
+
+    def _permission_check(
+        self, request: ExecutionRequest, working_dir: Path
+    ) -> None:
         effective = classify_request(request)
         if effective is IdempotencyClass.READ_ONLY:
             # Deterministically allowlisted read-only command, no gateway needed.
             return
-        if self.permission_gateway is None:
+        if self._permission_gateway is None:
             # Fail closed for side-effecting commands.
             raise PermissionError("permission gateway unavailable")
-        decision = self.permission_gateway.decide(
+        # Arbitrary process arguments can target resources beyond cwd, so a
+        # workspace-scoped grant is insufficient. Non-read-only process
+        # execution requires an explicit global automation grant; the exact
+        # executable, arguments, and working directory remain approval-bound.
+        decision = self._permission_gateway.decide(
             "automation.execute",
-            request.working_dir or "",
+            "*",
             idempotency=effective.value,
             task_id=request.task_id,
-            args={"executable": request.executable, "args": request.args},
+            step_id=request.request_id,
+            args={
+                "executable": request.executable,
+                "args": list(request.args),
+                "working_dir": str(working_dir),
+            },
         )
         from orion.permissions.models import PermissionDecision
 
@@ -86,12 +183,12 @@ class AutomationExecutor:
             )
 
     def execute(self, request: ExecutionRequest, *, cancel_event: Any = None) -> ExecutionResult:
-        self.validate_request(request)
+        working_dir, executable = self.validate_request(request)
         if request.dry_run:
             return ExecutionResult(
                 request_id=request.request_id, exit_code=0, stdout="dry run", stderr=""
             )
-        self._permission_check(request)
+        self._permission_check(request, working_dir)
 
         result = ExecutionResult(request_id=request.request_id)
         start = time.monotonic()
@@ -111,13 +208,39 @@ class AutomationExecutor:
             finally:
                 pipe.close()
 
+        command_args = list(request.args)
+        process_env = {**os.environ, **request.env} if request.env else dict(os.environ)
+        if classify_request(request) is IdempotencyClass.READ_ONLY:
+            # The only unprivileged command is Git status with optional writes,
+            # filesystem monitors, and pagers disabled.
+            command_args = [
+                "--no-pager",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+                "--no-optional-locks",
+                "status",
+                *request.args[1:],
+            ]
+            for key in tuple(process_env):
+                if key.upper().startswith("GIT_"):
+                    process_env.pop(key, None)
+            process_env.update(
+                {
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_OPTIONAL_LOCKS": "0",
+                    "GIT_PAGER": "cat",
+                    "PAGER": "cat",
+                }
+            )
         try:
             proc = subprocess.Popen(
-                [request.executable, *request.args],
-                cwd=request.working_dir or None,
+                [executable, *command_args],
+                cwd=str(working_dir) if working_dir is not None else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env={**os.environ, **request.env} if request.env else None,
+                env=process_env,
                 text=False,
             )
         except Exception as exc:

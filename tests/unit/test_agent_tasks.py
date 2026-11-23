@@ -61,20 +61,25 @@ def test_failure_represented() -> None:
     assert finished.state.value in {"failed", "partial"}
     assert finished.steps[0].state.value == "failed"
 
-def test_unknown_planner_idempotency_is_non_idempotent() -> None:
+
+def test_unknown_planner_idempotency_is_rejected() -> None:
+    # Their clean tip: unknown planner idempotency classifications fail closed.
     from orion.agent.models import PlannedStep
-    from orion.tasks.models import IdempotencyClass
 
     agent = _make_agent()
     objective = agent.submit_objective("echo a safe message")
-    task = agent.create_task_from_objective(
-        objective,
-        steps=[
-            PlannedStep(
-                capability_id="echo",
-                input={"text": "hello"},
-                idempotency="future_unknown_value",
-            )
-        ],
-    )
-    assert task.steps[0].idempotency is IdempotencyClass.NON_IDEMPOTENT
+    try:
+        agent.create_task_from_objective(
+            objective,
+            steps=[
+                PlannedStep(
+                    capability_id="echo",
+                    input={"text": "hello"},
+                    idempotency="future_unknown_value",
+                )
+            ],
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown planner idempotency should be rejected")

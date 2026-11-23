@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import threading
 from typing import Any
 
@@ -16,25 +17,17 @@ from orion.experience.models import (
 from orion.experience.store import ExperienceStore
 
 
-def _scrub_value(value: Any, fields: set[str]) -> Any:
-    """Recursively redact matching keys in nested dictionaries and lists."""
-    if isinstance(value, dict):
-        return {
-            key: "[REDACTED]" if key in fields else _scrub_value(item, fields)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_scrub_value(item, fields) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_scrub_value(item, fields) for item in value)
-    return value
-
-
 def _scrub_mapping(mapping: dict, fields: list[str]) -> None:
-    """Scrub matching keys at every nesting level in-place."""
-    scrubbed = _scrub_value(mapping, set(fields))
-    mapping.clear()
-    mapping.update(scrubbed)
+    """Recursively scrub matching mapping keys, including nested action payloads."""
+    for key, value in list(mapping.items()):
+        if key in fields:
+            mapping[key] = "[REDACTED]"
+        elif isinstance(value, dict):
+            _scrub_mapping(value, fields)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _scrub_mapping(item, fields)
 
 
 class ExperienceRecorder:
@@ -55,8 +48,12 @@ class ExperienceRecorder:
         self.last_error: str | None = None
 
     def _save(self, exp: Experience) -> None:
+        snapshot = copy.deepcopy(exp)
         if self.store is not None:
-            self.store.save(exp)
+            self.store.save(snapshot)
+        else:
+            with self._lock:
+                self._experiences[exp.experience_id] = snapshot
 
     def _discard(self, experience_id: str) -> bool:
         if self.store is not None:
@@ -104,11 +101,8 @@ class ExperienceRecorder:
                 metadata=dict(metadata or {}),
             )
             self._save(exp)
-            if self.store is None:
-                with self._lock:
-                    self._experiences[exp.experience_id] = exp
             self.last_error = None
-            return exp
+            return copy.deepcopy(exp)
         except Exception as exc:
             self.last_error = str(exc)
             return None
@@ -158,15 +152,16 @@ class ExperienceRecorder:
 
     def get(self, experience_id: str) -> Experience | None:
         if self.store is not None:
-            return self.store.get(experience_id)
+            experience = self.store.get(experience_id)
+            return copy.deepcopy(experience)
         with self._lock:
-            return self._experiences.get(experience_id)
+            return copy.deepcopy(self._experiences.get(experience_id))
 
     def list_experiences(self) -> list[Experience]:
         if self.store is not None:
-            return self.store.list()
+            return copy.deepcopy(self.store.list())
         with self._lock:
-            return list(self._experiences.values())
+            return [copy.deepcopy(experience) for experience in self._experiences.values()]
 
     def add_feedback(
         self,
@@ -178,12 +173,22 @@ class ExperienceRecorder:
         exp = self.get(experience_id)
         if exp is None:
             raise KeyError(f"experience not found: {experience_id}")
+        if any(
+            field in exp.redacted_fields
+            for field in ("feedback", "feedback.content", "content")
+        ):
+            content = "[REDACTED]"
+        if any(
+            field in exp.redacted_fields
+            for field in ("feedback", "feedback.author", "author")
+        ):
+            author = "[REDACTED]"
         fb = ExperienceFeedback(content=content, feedback_type=feedback_type, author=author)
         with self._lock:
             exp.feedback.append(fb)
             # A correction does not change original outcome, but marks corrected if requested.
         self._save(exp)
-        return fb
+        return copy.deepcopy(fb)
 
     def mark_corrected(self, experience_id: str) -> Experience:
         exp = self.get(experience_id)
@@ -243,20 +248,34 @@ class ExperienceRecorder:
         exp.privacy_state = PrivacyState.REDACTED
         # Apply the redaction to the stored data, not only to the marker: the
         # dataset builder and any export must never see the original values.
-        _scrub_mapping(exp.metadata, exp.redacted_fields)
+        metadata_fields = exp.redacted_fields + [
+            field.removeprefix("metadata.")
+            for field in exp.redacted_fields
+            if field.startswith("metadata.")
+        ]
+        action_fields = exp.redacted_fields + [
+            field.removeprefix("actions.input.")
+            for field in exp.redacted_fields
+            if field.startswith("actions.input.")
+        ]
+        _scrub_mapping(exp.metadata, metadata_fields)
         for action in exp.actions:
-            _scrub_mapping(action.input, exp.redacted_fields)
-            action.observed_result = _scrub_value(action.observed_result, set(exp.redacted_fields))
-            if "observed_result" in exp.redacted_fields or "actions" in exp.redacted_fields:
+            if "actions" in exp.redacted_fields:
+                action.input = {key: "[REDACTED]" for key in action.input}
                 action.observed_result = "[REDACTED]"
-        # Feedback is a separate nested collection, not part of metadata.
-        # Scrub its content and any future nested values using the same schema.
-        if "feedback" in exp.redacted_fields:
-            exp.feedback = []
-        else:
-            for feedback in exp.feedback:
-                if "content" in exp.redacted_fields:
+            else:
+                _scrub_mapping(action.input, action_fields)
+                if "observed_result" in exp.redacted_fields:
+                    action.observed_result = "[REDACTED]"
+        for feedback in exp.feedback:
+            if "feedback" in exp.redacted_fields:
+                feedback.content = "[REDACTED]"
+                feedback.author = "[REDACTED]"
+            else:
+                if "content" in exp.redacted_fields or "feedback.content" in exp.redacted_fields:
                     feedback.content = "[REDACTED]"
+                if "author" in exp.redacted_fields or "feedback.author" in exp.redacted_fields:
+                    feedback.author = "[REDACTED]"
         exp.eligible_for_training = exp.quality_state is QualityState.APPROVED and not exp.excluded
         self._save(exp)
         return exp

@@ -52,29 +52,23 @@ class ResidentAgent:
         planned = steps if steps is not None else self.plan_objective(objective)
         task_steps: list[TaskStep] = []
         for i, ps in enumerate(planned):
-            from orion.tasks.models import TaskStep
-
             try:
-                planned_idempotency = IdempotencyClass(ps.idempotency)
-            except (ValueError, TypeError):
-                # Unknown planner classifications are never treated as safe
-                # for crash recovery.
-                planned_idempotency = IdempotencyClass.NON_IDEMPOTENT
+                IdempotencyClass(ps.idempotency)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"planner returned invalid idempotency classification for "
+                    f"{ps.capability_id!r}: {ps.idempotency!r}"
+                ) from exc
             try:
-                registered = self.registry.get(ps.capability_id)
-            except KeyError:
-                raise ValueError(f"planner selected unregistered capability: {ps.capability_id}")
-            # The registry is application-controlled and authoritative. A
-            # planner may make recovery more conservative, never less safe.
-            idem = (
-                IdempotencyClass.NON_IDEMPOTENT
-                if planned_idempotency is IdempotencyClass.NON_IDEMPOTENT
-                else (
-                    planned_idempotency
-                    if planned_idempotency is IdempotencyClass.IDEMPOTENT
-                    else registered.idempotency
-                )
-            )
+                capability = self.registry.get(ps.capability_id)
+            except KeyError as exc:
+                raise ValueError(
+                    f"planner referenced unknown capability: {ps.capability_id!r}"
+                ) from exc
+            # Persist the classification from the registered capability, not
+            # the planner. Planner output is untrusted and cannot downgrade a
+            # side effect to read-only for crash recovery.
+            idem = IdempotencyClass(capability.idempotency.value)
             task_steps.append(
                 TaskStep(
                     task_id="",
@@ -98,6 +92,38 @@ class ResidentAgent:
 
     def run_task(self, task_id: str) -> Task:
         task = self.task_manager.get_task(task_id)
+        # Reconcile persisted classifications against trusted capability
+        # metadata before any recovery or execution decision.
+        for step in task.steps:
+            try:
+                capability = self.registry.get(step.capability_id)
+            except KeyError:
+                return self.task_manager.update_task(
+                    task_id,
+                    state=TaskState.PAUSED,
+                    recovery_safe=False,
+                    failure_code="unknown_capability_requires_review",
+                )
+            trusted_idempotency = IdempotencyClass(capability.idempotency.value)
+            if step.state is TaskStepState.RUNNING and (
+                trusted_idempotency is IdempotencyClass.NON_IDEMPOTENT
+            ):
+                self.task_manager.update_task(
+                    task_id,
+                    state=TaskState.PAUSED,
+                    recovery_safe=False,
+                    failure_code="unsafe_recovery_requires_review",
+                )
+                return self.task_manager.get_task(task_id)
+            if step.idempotency is not trusted_idempotency:
+                self.task_manager.update_step(
+                    task_id, step.step_id, idempotency=trusted_idempotency
+                )
+        task = self.task_manager.get_task(task_id)
+        if not task.recovery_safe:
+            # Recovery quarantined an ambiguous in-flight side effect. Do not
+            # execute later steps until a user reconciles the task explicitly.
+            return task
         if task.state is TaskState.CREATED:
             task = self.task_manager.transition_task_state(task_id, TaskState.PLANNED)
         if task.state is TaskState.PLANNED:

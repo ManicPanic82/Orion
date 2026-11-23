@@ -9,7 +9,7 @@ from typing import Any
 
 from orion.config.paths import app_data_dir
 from orion.core.events import EventStream
-from orion.tasks.models import IdempotencyClass, Objective, Task, TaskState, TaskStep, TaskStepState
+from orion.tasks.models import Objective, Task, TaskState, TaskStep, TaskStepState
 from orion.tasks.repository import SQLiteTaskRepository, TaskRepository
 from orion.tasks.state_machine import transition_step, transition_task
 
@@ -30,9 +30,7 @@ class TaskManager:
         # Otherwise a repeated client request after restart could create a
         # duplicate task even though the original request is already persisted.
         self._request_index: dict[str, str] = {
-            task.request_id: task.task_id
-            for task in self._repository.list()
-            if task.request_id
+            task.request_id: task.task_id for task in self._repository.list() if task.request_id
         }
         self._cancellations: dict[str, threading.Event] = {}
         self._lock = threading.RLock()
@@ -165,17 +163,16 @@ class TaskManager:
 
     def recover_task(self, task_id: str) -> Task:
         task = self._repository.get(task_id)
-        # Only resume if recovery_safe and no non-idempotent ambiguity.
-        if not task.recovery_safe:
-            return task
-        # Reset running steps to pending for safe/idempotent steps.
-        for step in task.steps:
-            if step.state is TaskStepState.RUNNING:
-                if step.idempotency in {IdempotencyClass.READ_ONLY, IdempotencyClass.IDEMPOTENT}:
-                    step.state = TaskStepState.PENDING
-                else:
-                    task.recovery_safe = False
+        # A persisted RUNNING step has an ambiguous outcome after a process
+        # restart. Its stored idempotency label may be stale or planner-supplied,
+        # so never replay it automatically at this layer.
+        if any(step.state is TaskStepState.RUNNING for step in task.steps):
+            task.recovery_safe = False
         if task.recovery_safe and task.state in {TaskState.RUNNING, TaskState.PAUSED}:
             task.state = TaskState.PAUSED
+        elif not task.recovery_safe:
+            # Keep ambiguous in-flight work paused for explicit reconciliation.
+            task.state = TaskState.PAUSED
+            task.failure_code = "unsafe_recovery_requires_review"
         self._repository.save(task)
         return task

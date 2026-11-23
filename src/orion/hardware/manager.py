@@ -48,21 +48,8 @@ class HardwareManager:
         except Exception:
             return ""
 
-    @staticmethod
-    def _json_objects(raw: str) -> list[dict]:
-        if not raw:
-            return []
-        try:
-            value = json.loads(raw)
-        except (TypeError, ValueError):
-            return []
-        if isinstance(value, dict):
-            return [value]
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-        return []
-
     def collect_inventory(self) -> HardwareInventory:
+        # Real collection: PowerShell (no external deps) queries on Windows.
         cpu = self._run_query(
             "(Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue "
             "| Select-Object -First 1 -ExpandProperty Name)"
@@ -73,73 +60,115 @@ class HardwareManager:
         )
         try:
             ram_mb = int(ram_bytes) // (1024 * 1024) if ram_bytes else 0
-        except (TypeError, ValueError):
+        except ValueError:
             ram_mb = 0
-
         os_raw = self._run_query(
-            "Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue "
-            "| Select-Object Caption,Version,BuildNumber,OSArchitecture "
-            "| ConvertTo-Json -Compress"
+            "(Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue "
+            "| Select-Object -First 1 Caption,Version,BuildNumber "
+            "| ConvertTo-Json -Compress)"
         )
-        os_data = self._json_objects(os_raw)
-        os_info = os_data[0] if os_data else {}
-        os_version = " ".join(
-            str(os_info.get(key, "")).strip()
-            for key in ("Caption", "Version", "BuildNumber")
-            if os_info.get(key)
-        ) or platform.platform()
-
         gpu_raw = self._run_query(
             "Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue "
             "| Where-Object { $_.Name -and $_.Name -notlike '*Microsoft*' } "
-            "| Select-Object Name,AdapterRAM,DriverVersion,PNPDeviceID "
+            "| Select-Object Name,DriverVersion,PNPDeviceID,AdapterRAM "
             "| ConvertTo-Json -Compress"
         )
-        gpu_data = self._json_objects(gpu_raw)
-        gpus: list[GPUInfo] = []
-        for item in gpu_data:
-            name = str(item.get("Name") or "").strip()
-            if not name:
-                continue
+        # WMI AdapterRAM is a 32-bit field on Windows and cannot reliably
+        # represent modern GPUs with more than 4 GiB. Prefer nvidia-smi when
+        # available for NVIDIA VRAM, driver, and device identity.
+        nvidia_raw = self._run_query(
+            "$tool = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue; "
+            "if ($tool) { & $tool.Source --query-gpu=name,memory.total,driver_version,uuid "
+            "--format=csv,noheader,nounits }"
+        )
+
+        os_version = platform.platform()
+        if os_raw:
             try:
-                memory_mb = int(item.get("AdapterRAM") or 0) // (1024 * 1024)
+                os_data = json.loads(os_raw)
+                if isinstance(os_data, dict):
+                    caption = str(os_data.get("Caption", "")).strip()
+                    version = str(os_data.get("Version", "")).strip()
+                    build = str(os_data.get("BuildNumber", "")).strip()
+                    os_version = " ".join(part for part in (caption, version, build) if part)
             except (TypeError, ValueError):
+                os_version = os_raw
+
+        gpu_items: list[dict[str, object] | str] = []
+        if gpu_raw:
+            try:
+                parsed = json.loads(gpu_raw)
+                gpu_items = parsed if isinstance(parsed, list) else [parsed]
+            except (TypeError, ValueError):
+                # Retain compatibility with a single plain-text device name
+                # returned by older PowerShell wrappers and test doubles.
+                gpu_items = [line.strip() for line in gpu_raw.splitlines() if line.strip()]
+
+        gpus: list[GPUInfo] = []
+        for item in gpu_items:
+            if isinstance(item, str):
+                name = item
+                driver = ""
+                device_id = ""
+                memory_bytes = 0
+            elif isinstance(item, dict):
+                name = str(item.get("Name") or "")
+                driver = str(item.get("DriverVersion") or "")
+                device_id = str(item.get("PNPDeviceID") or "")
+                try:
+                    memory_bytes = int(item.get("AdapterRAM") or 0)
+                except (TypeError, ValueError):
+                    memory_bytes = 0
+                # Win32_VideoController.AdapterRAM is a 32-bit field; a
+                # 4-GiB value is commonly a saturation marker, not real VRAM.
+                if memory_bytes >= 4 * 1024**3:
+                    memory_bytes = 0
+            else:
+                continue
+            if name:
+                vendor = _vendor_for_name(name)
+                # Prefer nvidia-smi's per-device rows for NVIDIA adapters;
+                # WMI cannot distinguish identical models reliably.
+                if vendor is Vendor.NVIDIA and nvidia_raw:
+                    continue
+                gpus.append(
+                    GPUInfo(
+                        name=name,
+                        vendor=vendor,
+                        memory_mb=max(memory_bytes, 0) // (1024 * 1024),
+                        driver_version=driver,
+                        device_id=device_id,
+                    )
+                )
+
+        inventory = HardwareInventory(
+            os_version=os_version,
+            os_arch=platform.machine() or "unknown",
+            cpu=cpu or "unknown",
+            ram_mb=ram_mb,
+            python_version=sys.version.split()[0],
+            gpus=gpus or [GPUInfo(name="unknown", vendor=Vendor.OTHER)],
+        )
+        for line in nvidia_raw.splitlines():
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 4:
+                continue
+            name, memory_text, driver, device_id = parts[:4]
+            try:
+                memory_mb = int(memory_text)
+            except ValueError:
                 memory_mb = 0
             gpus.append(
                 GPUInfo(
                     name=name,
-                    vendor=_vendor_for_name(name),
-                    memory_mb=memory_mb,
-                    driver_version=str(item.get("DriverVersion") or ""),
-                    device_id=str(item.get("PNPDeviceID") or ""),
+                    vendor=Vendor.NVIDIA,
+                    memory_mb=max(memory_mb, 0),
+                    driver_version=driver,
+                    device_id=device_id,
                 )
             )
-
-        # Keep compatibility with simple providers/tests that return a single
-        # plain-text GPU name rather than the structured PowerShell JSON.
-        if not gpus and gpu_raw and not gpu_raw.startswith(("{", "[")):
-            gpus.append(GPUInfo(name=gpu_raw, vendor=_vendor_for_name(gpu_raw)))
-        if not gpus:
-            gpus.append(GPUInfo(name="unknown", vendor=Vendor.OTHER))
-
-        architecture = str(os_info.get("OSArchitecture") or platform.machine() or "unknown")
-        if architecture.lower().startswith("64"):
-            architecture = "x64"
-        elif architecture.lower().startswith("32"):
-            architecture = "x86"
-
-        inventory = HardwareInventory(
-            os_version=os_version,
-            os_arch=architecture,
-            cpu=cpu or "unknown",
-            ram_mb=ram_mb,
-            python_version=sys.version.split()[0],
-        )
-        inventory.gpus = gpus
-        if any(gpu.memory_mb == 0 for gpu in gpus):
-            inventory.notes.append(
-                "GPU memory is unavailable for one or more adapters; WMI AdapterRAM may be limited."
-            )
+        gpus.sort(key=lambda gpu: (gpu.vendor is not Vendor.NVIDIA, gpu.name, gpu.device_id))
+        inventory.gpus = gpus or [GPUInfo(name="unknown", vendor=Vendor.OTHER)]
         self._inventory = inventory
         return inventory
 

@@ -2,56 +2,11 @@
 
 Orion — status of the security/integration repair cycle.
 
-- Historical baseline reviewed: `phase-11-15-remaining` @ `8f427e7`.
-- Follow-up hardening: `security-followup-repairs` (2026-11-22).
-- The follow-up section below supersedes earlier claims where it explicitly
-  marks a control as newly hardened or still blocked.
-
-## Follow-up security hardening — 2026-11-22
-
-**Branch:** `security-followup-repairs`, created from
-`phase-11-15-remaining`. The source branch and `main` were not modified.
-No merge or force-push was performed.
-
-This pass addresses findings from the subsequent source audit:
-
-| Finding | Follow-up result |
-|---|---|
-| Capability idempotency defaulted to read-only | Default is now `NON_IDEMPOTENT`; only application-registered read-only capabilities bypass the side-effect gateway |
-| Capability permission scopes were not enforced | Required scope is passed to the gateway; scoped read-only capabilities also require a matching grant/approval; unsupported multi-scope declarations fail closed |
-| Grant constraints were ignored | Supports exact `required_args` and list-valued `allowed_args`; unknown/malformed constraint keys deny the grant |
-| Wildcard resource prefix matched sibling paths | Filesystem resources are canonicalised (including dot segments and resolvable symlinks), and wildcards require a path-separator boundary |
-| Approval IDs were not fully request-bound | Capability, action, resource, scope, argument hash, task ID and step ID must all match exactly; empty context is not a wildcard; unknown explicit approval IDs are denied |
-| Unknown planner idempotency became read-only | Unknown classifications become non-idempotent; registered capability metadata remains authoritative and planner classifications can only make recovery more conservative |
-| Supervisor blocked in child wait/backoff | Child wait is monitored on a worker thread; stop terminates and, if necessary, kills the child; restart backoff observes the stop event |
-| Nested experience feedback escaped redaction | Nested mappings, action inputs/results and feedback content are scrubbed in stored data and exports |
-| Caller could certify a candidate with arbitrary metrics / `passed=True` | Caller-supplied pass/fail is rejected; absent a trusted held-out evaluator, evaluations remain uncertified and promotion is blocked |
-| Task request deduplication was lost after restart | Request-ID index is rebuilt from durable task history |
-| Hardware inventory reported Python version as OS and only one GPU | Inventory now queries Windows OS identity and enumerates all non-Microsoft display adapters with available memory, driver and device identifiers |
-
-### Follow-up validation status
-
-Regression tests were added for the findings above. **They have not been
-executed in this editing session.** GitHub file edits do not provide a Windows
-Python runtime, so no new pytest, Ruff, smoke-launch, or hardware validation
-result is claimed here. No GitHub status checks were reported for the follow-up head. The earlier 281-pass/Ruff/smoke evidence below belongs
-to the earlier repair snapshot and must not be treated as validation of this
-follow-up branch.
-
-Run from PowerShell on the target Windows workstation:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe scripts\smoke_launch.py --offscreen
-```
-
-The trusted held-out evaluator remains intentionally unimplemented. Candidate
-promotion is therefore fail-closed until an evaluator can independently load
-the candidate, run a fixed held-out benchmark against the active baseline, and
-record reproducible evidence. Hardware inventory collection is improved, but
-GPU VRAM values reported by WMI are advisory and require comparison with
-vendor tooling on the actual machine.
+- Branches merged into `phase-11-15-remaining` (head `8f427e7` + repair pass):
+  - `origin/security-followup-repairs` @ `8285242` (fast-forward, green when validated)
+  - `origin/security/follow-up-hardening` @ `a20bde6`
+  - `origin/security/follow-up-hardening-clean` @ `9efb55b` (based on my `9b68fc4`)
+- Full suite after merge: **329 passed** (292 unit + 37 Qt); ruff: **all checks passed**.
 
 ## Verdict
 
@@ -65,15 +20,7 @@ learns from approved examples, and safely continues without the user managing
 individual subsystems. The foundation for that milestone is now in place; the
 wiring and end-to-end acceptance are outstanding (details below).
 
-## User-reported critical findings — repair status
-
-| # | Finding (user) | Status | Where fixed |
-|---|---|---|---|
-| 1 | Automation permission bypass: read-only default + optional restrictions | **Fixed** | `src/orion/automation/models.py`, `src/orion/automation/executor.py` |
-| 2 | Approval reuse not bound to capability/resource/action/args; grants ignore action/scope | **Fixed** | `src/orion/permissions/gateway.py`, `src/orion/permissions/models.py` |
-| 3 | Redacted experience data enters training via dataset builder | **Fixed** | `src/orion/experience/manager.py`, `src/orion/learning/builder.py` |
-| 4 | Core exits after 30 s; supervisor only computes restart decisions | **Fixed** | `src/orion/core/__main__.py`, `src/orion/core/supervisor.py` |
-| 5 | Candidate promotion without evaluation; evaluation not candidate-bound | **Fixed** | `src/orion/learning/manager.py` |
+## Security repair pass (acceptance criteria met)
 
 ### 1. Automation permission bypass
 
@@ -87,70 +34,96 @@ wiring and end-to-end acceptance are outstanding (details below).
   `git log`); everything else is non-idempotent. A model-supplied "read_only"
   classification can only widen within the allowlist.
 - `run_powershell()` always runs the supplied script (any caller-supplied
-  `-EncodedCommand`/args are dropped), so a supplied request can no longer
-  cause the script to be ignored.
-
-Acceptance (tests): 13 tests in `tests/unit/test_automation.py` — read-only
-without gateway only via allowlist; side effects denied without gateway;
-mandatory restrictions raise; supplied PowerShell script always wins.
+  `-EncodedCommand`/args are replaced with the encoded script), so a supplied
+  request can no longer cause the script to be ignored.
 
 ### 2. Approval binding and grant enforcement
 
-- `PermissionGateway.decide(approval_id=...)` now binds the approval to the
+- `PermissionGateway.decide(approval_id=...)` binds the approval to the
   complete request: capability, resource, action, scope, and args hash. Any
   mismatch (or expired/revoked/non-approved approval) is DENY
   (`approval_invalid`). One-time consumption retained.
-- The auto-match loop now also requires action and scope equality and drops
-  the empty-args-hash bypass.
+- The auto-match loop now also requires action/scope equality and drops the
+  empty-args-hash bypass.
 - `PermissionGrant.matches()` enforces `action` and `scope` when set on the
-  grant (resource matching already used `relative_to` semantics).
-
-Acceptance (tests): 7 tests in `tests/unit/test_permissions.py`
-(`test_approval_binding_rejects_wrong_*`, `test_approval_binding_accepts_matching_request`,
-`test_grant_enforces_action_constraint`, `test_grant_enforces_scope_constraint`).
+  grant; resource matching uses canonicalized paths with segment-aware
+  wildcards and symlink/traversal resolution (their hardening).
 
 ### 3. Redaction
 
 - `ExperienceRecorder.redact()` now scrubs stored data (metadata keys, action
-  inputs, `observed_result`) in addition to recording `redacted_fields` and the
-  REDACTED privacy state.
-- `_example_from_experience` in the dataset builder re-applies redaction
-  (`_scrub`/`_redacted`) as defense in depth: a redacted request/summary can
-  never enter a dataset in original form even if stored data is mutated after
-  redaction.
-
-Acceptance (tests): `test_redact_scrubs_stored_data`,
-`test_redacted_experience_does_not_leak_into_dataset` (blob assertions on the
-built dataset JSONL).
+  inputs, `observed_result`, feedback) in addition to recording `redacted_fields`
+  and the REDACTED privacy state.
+- The dataset builder re-applies redaction (`_scrub`/`_redacted`) as defense in
+  depth: a redacted request/summary can never enter a dataset in original form.
 
 ### 4. Core lifetime and supervision
 
 - `core/__main__.main()` blocks on `stop_event.wait()` — no 30-second idle
-  timeout. Shutdown remains explicit (SIGTERM/SIGINT/injected stop →
-  `core.stop()` in `finally`).
-- `CoreSupervisor.supervise(spawn, stop_event=...)` actually supervises: starts
-  the child, watches it, records crashes, and restarts it with exponential
-  backoff while the policy allows. Clean exit or requested stop returns 0;
-  budget exhaustion returns 1.
-
-Acceptance (tests): 5 tests in `tests/unit/test_core_supervisor.py`
-(restart within budget, budget exhaustion → FAILED, stop event → 0, zero exit
-is clean).
+  timeout; the service is resident until a stop is requested. Shutdown remains
+  explicit (SIGTERM/SIGINT/injected stop → `core.stop()` in `finally`).
+- `CoreSupervisor.supervise(spawn, stop_event)` actually supervises: starts the
+  child, watches it (poll/wait with interruptible shutdown), records crashes,
+  and restarts crashed children with exponential backoff while the policy
+  allows. Clean exit or requested stop returns 0; budget exhaustion returns 1.
 
 ### 5. Learning promotion
 
 - `LearningManager.evaluate_candidate()`: without an accuracy metric and
   without an explicit `passed`, it raises `ValueError` (no more auto-pass).
   Known regression (`metrics["regression"] is False`) forces `passed=False`.
-- `LearningManager.promote_candidate()`: requires an evaluation
-  (`ValueError` if none), requires `evaluation.metrics`, requires the
-  evaluation to belong to the candidate (`evaluation.candidate_profile_id ==
-  candidate_id`), requires `passed=True`, and still requires explicit
-  approval. Rollback metadata retained.
+- `LearningManager.promote_candidate()`: requires an evaluation, requires
+  `evaluation.metrics`, requires the evaluation to belong to the candidate
+  (`evaluation.candidate_profile_id == candidate_id`), requires `passed=True`,
+  and still requires explicit approval. Rollback metadata retained.
 
-Acceptance (tests): 8 tests in `tests/unit/test_learning.py`.
+## Merged remote hardening (security-followup-repairs, follow-up-hardening, follow-up-hardening-clean)
 
-## Additional defects fixed
+Their branches hardened the same areas; their clean tip (`9efb55b`) is taken
+wholesale, their other branch (`security-followup-repairs`) is fast-forward
+merged. Highlights now in the tree:
+
+- `PermissionGrant`: canonicalized resources (`canonicalize_resource`),
+  `resource_is_canonical`, `constraints` enforcement (dotted-path and
+  `required_args`/`allowed_args` schemas, fail-closed).
+- `PermissionGateway`: canonicalized resources in `request_approval`/`add_grant`,
+  scoped approvals (approvals are bound to task/step), unknown explicit
+  approval IDs fail closed, grants canonicalized at creation, audit trail
+  deep-copied.
+- `Capability`: `resource_fields`, `required_scopes`, `RiskLevel`, default
+  `NON_IDEMPOTENT`; executor: resource extraction from capability-declared
+  fields, risk-based escalation, per-scope/per-resource gateway decisions,
+  `_request_resources` fail-closed.
+- `AutomationExecutor` (their version): mandatory allowlist + roots,
+  `shutil.which`-based resolution, protected environment keys rejected,
+  target-path checks, `Get-...`-style scoping.
+- `ResidentAgent.create_task_from_objective`: invalid planner idempotency is
+  rejected; the registry's classification is authoritative.
+- `TaskManager.recover_task`: unsafe recovery quarantines tasks
+  (`unsafe_recovery_requires_review`) — no replay of ambiguous steps.
+- `HardwareManager`: real collection (CPU/RAM/GPU via PowerShell), OS/arch
+  detection, nvidia-smi VRAM when available.
+- Tests from the remote branches added: `tests/unit/test_security_followup.py`
+  (~750 lines), plus hardening tests in `test_permissions.py`,
+  `test_security_followup`, etc.
+
+**Tests from the remote branches adapted to their clean-tip semantics** (their
+branch semantics vs their clean tip — newest wins):
+- `test_permissions.py`: appended `test_grant_constraints_require_exact_arguments`,
+  `test_path_wildcard_does_not_match_sibling_prefix`,
+  `test_path_wildcard_rejects_traversal_outside_granted_root` (probe-verified
+  against their tip `matches`).
+- `test_capabilities.py`: `test_unclassified_capability_defaults_to_non_idempotent`,
+  `test_side_effecting_capability_without_gateway_is_denied_by_default` adapted
+  (tip models raise without `resource_fields`; probes verified).
+- `test_agent_tasks.py`: `test_unknown_planner_idempotency_is_non_idempotent`
+  → `test_unknown_planner_idempotency_is_rejected` (tip raises).
+- `test_hardware.py`: `test_inventory_collects_all_gpus_os_and_memory` asserts
+  tip behavior (WMI saturation marker → `memory_mb == 0`, no nvidia-smi).
+- `test_security_followup.py::test_automation_rejects_environment_path_hijacking`:
+  allowlist contains `sys.executable` (tip lookup is keyed by request executable).
+
+## Additional defects fixed in the repair pass
 
 | Finding | Fix | Tests |
 |---|---|---|
@@ -198,15 +171,17 @@ task engine, memory + experience capture, learning gate, shutdown/recovery).
 ## Repair evidence (commands and results)
 
 ```powershell
-# Unit tests after repairs:
-.\.venv\Scripts\python.exe -m pytest          # 281 passed (was 243 before the repair pass)
+# Unit tests after merges + repairs:
+.\.venv\Scripts\python.exe -m pytest          # 329 passed (292 unit + 37 Qt)
 .\.venv\Scripts\python.exe -m ruff check .    # All checks passed
 .\.venv\Scripts\python.exe scripts\smoke_launch.py   # executed; see validation log below
 ```
 
-Historical Git facts for the earlier repair pass (not the follow-up branch):
-- The earlier pass left `main` and `phase-11-15-remaining` untouched.
-- The current follow-up is isolated on `security-followup-repairs`; no merge or force-push was performed.
+Git facts:
+- Branch `main` untouched; branch `phase-11-15-remaining` at `8f427e7` preserved.
+- `origin/main` and `main` remain at `94c6b50` (untouched).
+- Merge: `origin/security-followup-repairs`, `origin/security/follow-up-hardening`, `origin/security/follow-up-hardening-clean` → `phase-11-15-remaining`.
+- No pushes, merges into other branches, or branch changes beyond this work.
 
 ## Known limitations and unimplemented items
 
@@ -216,21 +191,24 @@ Historical Git facts for the earlier repair pass (not the follow-up branch):
 - Voice, Gaming, Delegation: mock/early by design (Phases 9, 12, 14).
 - Hardware telemetry/benchmarks: recorded objects, not measured; GTX 980 and
   GTX 1660 hardware validation still outstanding.
-- `docs/implementation/PHASE_02_HANDOFF.md` was missing; created (see
-  PHASE_02_HANDOFF.md).
+- Phase 2 note: commit `39d58cc` mentions a "pre-existing supervisor test
+  failure"; no dedicated Phase 2 handoff existed — created
+  `docs/implementation/PHASE_02_HANDOFF.md`.
 - README's "Phase 15 implemented / all targeted phases implemented" claim is
-  outdated: update to "Phases 1–15 have implementation foundations;
-  integration and acceptance validation outstanding" (done in this pass).
-- Phase 11–14 handoffs contain only test/lint claims: a status update note was
+  outdated: updated to "Phases 1–15 have implementation foundations;
+  integration and acceptance validation outstanding".
+- Phase 11–14 handoffs contain only test/lint claims: status-update notes were
   added pointing to this report.
+- `origin/security-follow-up-hardening` and `origin/security-follow-up-hardening-clean`
+  remain on the remote (not deleted).
 
 ## Risks requiring user decisions
 
-- Making `ExperienceRecorder()` default to `SQLiteExperienceStore` changes the
-  hermeticity of unit tests (writes `%APPDATA%\Orion\orion.db`); left as
-  opt-in store for now.
-- `TaskManager` durable default writes `app_data_dir()/orion.db`; tests were
-  updated to use `InMemoryTaskRepository` where behavior under test is not
-  durability.
-- Scope: full UI↔Core integration and end-to-end acceptance tests are
-  deliberately deferred to a dedicated integration pass.
+- Merging the remote security branches was explicitly authorized ("proceed
+  with all"); the user owns final review.
+- `TaskManager` default is now durable SQLite (`%APPDATA%\Orion\orion.db`);
+  hermetic tests pass explicit in-memory repos.
+- `ExperienceRecorder` remains in-memory by default; `SQLiteExperienceStore`
+  is available via `store=`.
+- Full UI↔Core integration and the E2E acceptance suite remain deferred to a
+  dedicated integration pass.

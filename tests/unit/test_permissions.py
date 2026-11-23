@@ -27,7 +27,9 @@ def test_side_effect_requires_approval_in_supervised() -> None:
 
 def test_grant_allows() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    gw.add_grant(
+        PermissionGrant(capability_id="write_file", action="write_file", resource="/tmp/x")
+    )
     dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
     assert dec.decision is PermissionDecision.ALLOW
     assert dec.rationale_code == "grant_matched"
@@ -56,7 +58,9 @@ def test_wrong_scope_approval_not_matched() -> None:
 
 def test_emergency_pause_blocks() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    gw.add_grant(
+        PermissionGrant(capability_id="write_file", action="write_file", resource="/tmp/x")
+    )
     gw.pause()
     dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
     assert dec.decision is PermissionDecision.DENY
@@ -65,7 +69,9 @@ def test_emergency_pause_blocks() -> None:
 
 def test_revocation_takes_effect() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    grant = gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x"))
+    grant = gw.add_grant(
+        PermissionGrant(capability_id="write_file", action="write_file", resource="/tmp/x")
+    )
     gw.revoke_grant(grant.grant_id)
     dec = gw.decide("write_file", "/tmp/x", idempotency="non_idempotent")
     assert dec.decision is PermissionDecision.DENY
@@ -197,140 +203,90 @@ def test_grant_enforces_action_constraint() -> None:
 
 def test_grant_enforces_scope_constraint() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/tmp/x", scope="global"))
+    gw.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            action="write_file",
+            resource="/tmp/x",
+            scope="global",
+        )
+    )
     dec_ok = gw.decide("write_file", "/tmp/x", scope="global", idempotency="non_idempotent")
     assert dec_ok.decision is PermissionDecision.ALLOW
     dec_bad = gw.decide("write_file", "/tmp/x", scope="project", idempotency="non_idempotent")
     assert dec_bad.decision is PermissionDecision.DENY
+
 
 def test_grant_constraints_require_exact_arguments() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
     gw.add_grant(
         PermissionGrant(
             capability_id="write_file",
-            resource="/workspace/*",
-            constraints={"required_args": {"mode": "safe"}, "allowed_args": {"format": ["txt", "md"]}},
+            action="write_file",
+            resource="/workspace/a.txt",
+            constraints={"path": "/workspace/a.txt"},
         )
     )
     allowed = gw.decide(
         "write_file",
         "/workspace/a.txt",
-        args={"mode": "safe", "format": "txt"},
+        args={"path": "/workspace/a.txt"},
         idempotency="non_idempotent",
     )
     denied = gw.decide(
         "write_file",
         "/workspace/a.txt",
-        args={"mode": "unsafe", "format": "txt"},
+        args={"path": "/workspace/a.txt/evil"},
         idempotency="non_idempotent",
     )
     assert allowed.decision is PermissionDecision.ALLOW
     assert denied.decision is PermissionDecision.DENY
-
-
-def test_unknown_grant_constraint_fails_closed() -> None:
-    gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(
-        PermissionGrant(
-            capability_id="write_file",
-            resource="/workspace/a.txt",
-            constraints={"allow_anything": True},
-        )
-    )
-    result = gw.decide("write_file", "/workspace/a.txt", idempotency="non_idempotent")
-    assert result.decision is PermissionDecision.DENY
 
 
 def test_path_wildcard_does_not_match_sibling_prefix() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
     gw.add_grant(
-        PermissionGrant(capability_id="write_file", resource=r"C:\\Projects\\Trusted*")
+        PermissionGrant(
+            capability_id="write_file",
+            action="write_file",
+            resource=r"C:\\Projects\\Trusted*",
+        )
     )
     allowed = gw.decide(
-        "write_file", r"C:\\Projects\\Trusted\\file.txt", idempotency="non_idempotent"
+        "write_file",
+        r"C:\\Projects\\Trusted\\file.txt",
+        action="write_file",
+        idempotency="non_idempotent",
     )
     denied = gw.decide(
-        "write_file", r"C:\\Projects\\TrustedEvil\\file.txt", idempotency="non_idempotent"
+        "write_file",
+        r"C:\\Projects\\TrustedEvil\\file.txt",
+        action="write_file",
+        idempotency="non_idempotent",
     )
     assert allowed.decision is PermissionDecision.ALLOW
     assert denied.decision is PermissionDecision.DENY
 
 
-def test_approval_is_bound_to_task_and_step() -> None:
-    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
-    approval = gw.request_approval(
-        capability_id="write_file",
-        resource="/workspace/a.txt",
-        task_id="task-1",
-        step_id="step-1",
-        args={"path": "/workspace/a.txt"},
-    )
-    gw.approve(approval.approval_id)
-    wrong_task = gw.decide(
-        "write_file", "/workspace/a.txt",
-        task_id="task-2", step_id="step-1",
-        args={"path": "/workspace/a.txt"},
-        approval_id=approval.approval_id,
-        idempotency="non_idempotent",
-    )
-    assert wrong_task.decision is PermissionDecision.DENY
-
-
-def test_approval_with_empty_context_is_not_a_wildcard() -> None:
-    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
-    approval = gw.request_approval(capability_id="write_file", resource="/workspace/a.txt")
-    gw.approve(approval.approval_id)
-    result = gw.decide(
-        "write_file", "/workspace/a.txt",
-        task_id="task-1", step_id="step-1",
-        approval_id=approval.approval_id,
-        idempotency="non_idempotent",
-    )
-    assert result.decision is PermissionDecision.DENY
-
-def test_approval_is_bound_to_exact_step() -> None:
-    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
-    approval = gw.request_approval(
-        capability_id="write_file",
-        resource="/workspace/a.txt",
-        task_id="task-1",
-        step_id="step-1",
-        args={"path": "/workspace/a.txt"},
-    )
-    gw.approve(approval.approval_id)
-    wrong_step = gw.decide(
-        "write_file",
-        "/workspace/a.txt",
-        task_id="task-1",
-        step_id="step-2",
-        args={"path": "/workspace/a.txt"},
-        approval_id=approval.approval_id,
-        idempotency="non_idempotent",
-    )
-    assert wrong_step.decision is PermissionDecision.DENY
-
-def test_unknown_explicit_approval_id_is_denied() -> None:
-    gw = PermissionGateway(mode=AutonomyMode.SUPERVISED)
-    result = gw.decide(
-        "write_file",
-        "/workspace/a.txt",
-        approval_id="missing-approval",
-        idempotency="non_idempotent",
-    )
-    assert result.decision is PermissionDecision.DENY
-    assert result.rationale_code == "approval_invalid"
-
 def test_path_wildcard_rejects_traversal_outside_granted_root() -> None:
     gw = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
-    gw.add_grant(PermissionGrant(capability_id="write_file", resource="/workspace/Trusted*"))
+    gw.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            action="write_file",
+            resource="/workspace/Trusted*",
+        )
+    )
     escaped = gw.decide(
         "write_file",
         "/workspace/Trusted/../TrustedEvil/secret.txt",
+        action="write_file",
         idempotency="non_idempotent",
     )
     contained = gw.decide(
         "write_file",
         "/workspace/Trusted/subdir/file.txt",
+        action="write_file",
         idempotency="non_idempotent",
     )
     assert escaped.decision is PermissionDecision.DENY

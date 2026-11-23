@@ -30,10 +30,14 @@ def _split_ids(
 
 
 def _redacted(exp: Experience, key: str) -> bool:
-    """A value is hidden when it is in ``redacted_fields`` or the experience is
-    marked REDACTED; redaction state alone is never enough because ``redact()``
-    also scrubs the stored data."""
-    return key in exp.redacted_fields or exp.privacy_state is PrivacyState.REDACTED
+    """Hide fields named directly or through their serialized metadata path."""
+    fields = set(exp.redacted_fields)
+    return (
+        key in fields
+        or f"metadata.{key}" in fields
+        or "metadata" in fields
+        or exp.privacy_state is PrivacyState.REDACTED
+    )
 
 
 def _scrub(exp: Experience, value: str, key: str) -> str:
@@ -46,10 +50,15 @@ def _example_from_experience(exp: Experience) -> DatasetExample:
     # layer of defence (defense in depth).
     input_payload = {
         "objective": _scrub(exp, exp.metadata.get("request", ""), "request"),
-        "actions": [a.capability_id for a in exp.actions],
+        "actions": [
+            "[REDACTED]"
+            if {"actions", "actions.capability_id", "capability_id"} & set(exp.redacted_fields)
+            else a.capability_id
+            for a in exp.actions
+        ],
     }
     output_payload = {
-        "outcome": exp.outcome.value,
+        "outcome": _scrub(exp, exp.outcome.value, "outcome"),
         "summary": _scrub(exp, exp.metadata.get("summary", ""), "summary"),
     }
     return DatasetExample(

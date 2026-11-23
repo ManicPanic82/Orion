@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
+
+
+def _redact_nested_mapping(mapping: dict[str, Any], fields: set[str]) -> None:
+    for key, value in list(mapping.items()):
+        if key in fields:
+            mapping[key] = "[REDACTED]"
+        elif isinstance(value, dict):
+            _redact_nested_mapping(value, fields)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _redact_nested_mapping(item, fields)
 
 
 class OutcomeClass(StrEnum):
@@ -97,37 +110,67 @@ class Experience:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self, *, redact: bool = False) -> dict[str, Any]:
-        data = {
-            "experience_id": self.experience_id,
-            "objective_id": self.objective_id,
-            "task_id": self.task_id,
-            "outcome": self.outcome.value,
-            "created_at": self.created_at,
-            "actions": [a.as_dict(redact=redact) for a in self.actions],
-            "feedback": [
-                {
-                    **f.as_dict(),
-                    "content": (
-                        "[REDACTED]"
-                        if redact and ("content" in self.redacted_fields or "feedback" in self.redacted_fields)
-                        else f.content
-                    ),
-                }
-                for f in self.feedback
-            ],
-            "privacy_state": self.privacy_state.value,
-            "quality_state": self.quality_state.value,
-            "eligible_for_training": self.eligible_for_training,
-            "excluded": self.excluded,
-            "redacted_fields": list(self.redacted_fields),
-            "scope": self.scope,
-            "metadata": dict(self.metadata),
-        }
+        data = copy.deepcopy(
+            {
+                "experience_id": self.experience_id,
+                "objective_id": self.objective_id,
+                "task_id": self.task_id,
+                "outcome": self.outcome.value,
+                "created_at": self.created_at,
+                "actions": [a.as_dict(redact=redact) for a in self.actions],
+                "feedback": [
+                    {
+                        **f.as_dict(),
+                        "content": (
+                            "[REDACTED]"
+                            if redact
+                            and (
+                                "content" in self.redacted_fields
+                                or "feedback" in self.redacted_fields
+                            )
+                            else f.content
+                        ),
+                    }
+                    for f in self.feedback
+                ],
+                "privacy_state": self.privacy_state.value,
+                "quality_state": self.quality_state.value,
+                "eligible_for_training": self.eligible_for_training,
+                "excluded": self.excluded,
+                "redacted_fields": list(self.redacted_fields),
+                "scope": self.scope,
+                "metadata": dict(self.metadata),
+            }
+        )
         if redact:
-            for field_name in self.redacted_fields:
+            fields = set(self.redacted_fields)
+            metadata_fields = fields | {
+                field.removeprefix("metadata.") for field in fields if field.startswith("metadata.")
+            }
+            action_fields = fields | {
+                field.removeprefix("actions.input.")
+                for field in fields
+                if field.startswith("actions.input.")
+            }
+            _redact_nested_mapping(data["metadata"], metadata_fields)
+            for action in data["actions"]:
+                if "actions" in fields:
+                    action["input"] = {key: "[REDACTED]" for key in action.get("input", {})}
+                    action["observed_result"] = "[REDACTED]"
+                else:
+                    _redact_nested_mapping(action.get("input", {}), action_fields)
+                    if "observed_result" in fields or "actions.observed_result" in fields:
+                        action["observed_result"] = "[REDACTED]"
+            for feedback in data["feedback"]:
+                if "feedback" in fields:
+                    feedback["content"] = "[REDACTED]"
+                    feedback["author"] = "[REDACTED]"
+                else:
+                    if "content" in fields or "feedback.content" in fields:
+                        feedback["content"] = "[REDACTED]"
+                    if "author" in fields or "feedback.author" in fields:
+                        feedback["author"] = "[REDACTED]"
+            for field_name in fields:
                 if field_name in data:
                     data[field_name] = "[REDACTED]"
-                metadata = data.get("metadata")
-                if isinstance(metadata, dict) and field_name in metadata:
-                    metadata[field_name] = "[REDACTED]"
         return data

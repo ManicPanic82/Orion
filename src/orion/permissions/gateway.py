@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import json
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -15,6 +17,7 @@ from orion.permissions.models import (
     PermissionDecision,
     PermissionGrant,
     PolicyDecision,
+    canonicalize_resource,
 )
 
 
@@ -55,8 +58,11 @@ class PermissionGateway:
 
     def add_grant(self, grant: PermissionGrant) -> PermissionGrant:
         with self._lock:
-            self._grants[grant.grant_id] = grant
-            return grant
+            stored = copy.deepcopy(grant)
+            stored.resource = canonicalize_resource(stored.resource)
+            stored.resource_is_canonical = True
+            self._grants[stored.grant_id] = stored
+            return copy.deepcopy(stored)
 
     def revoke_grant(self, grant_id: str) -> bool:
         with self._lock:
@@ -68,7 +74,7 @@ class PermissionGateway:
 
     def list_grants(self) -> list[PermissionGrant]:
         with self._lock:
-            return list(self._grants.values())
+            return [copy.deepcopy(grant) for grant in self._grants.values()]
 
     def _find_grant(
         self,
@@ -96,20 +102,20 @@ class PermissionGateway:
         action: str,
         scope: str,
         args_hash: str,
+        task_id: str | None,
+        step_id: str | None,
     ) -> bool:
-        """Return True when an approval is not bound to this exact request.
-
-        An approval may be used only for the complete request it was issued
-        for: same capability, resource, action, scope, and arguments.
-        """
-        # Every field is exact, including empty values and absent task IDs.
-        # An incomplete approval is not a wildcard.
-        return (
-            approval.capability_id != capability_id
-            or approval.resource != resource
-            or approval.action != action
-            or approval.scope != scope
-            or approval.args_hash != args_hash
+        """Return True unless the approval matches this exact request context."""
+        return any(
+            (
+                approval.capability_id != capability_id,
+                approval.resource != resource,
+                approval.action != action,
+                approval.scope != scope,
+                approval.args_hash != args_hash,
+                approval.task_id != task_id,
+                approval.step_id != step_id,
+            )
         )
 
     # -- approvals -------------------------------------------------------
@@ -129,7 +135,11 @@ class PermissionGateway:
         persistent: bool = False,
         one_time: bool = True,
     ) -> ApprovalRequest:
-        args_hash = hashlib.sha256(repr(sorted((args or {}).items())).encode()).hexdigest()
+        resource = canonicalize_resource(resource)
+        canonical_args = json.dumps(
+            args or {}, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        args_hash = hashlib.sha256(canonical_args).hexdigest()
         expires_at = None
         if ttl_seconds is not None:
             expires_at = (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat()
@@ -148,7 +158,7 @@ class PermissionGateway:
             one_time=one_time,
         )
         with self._lock:
-            self._approvals[approval.approval_id] = approval
+            self._approvals[approval.approval_id] = copy.deepcopy(approval)
         self._audit_decision(
             capability_id=capability_id,
             action=action or capability_id,
@@ -159,7 +169,7 @@ class PermissionGateway:
             task_id=task_id,
             step_id=step_id,
         )
-        return approval
+        return copy.deepcopy(approval)
 
     def approve(
         self,
@@ -186,17 +196,18 @@ class PermissionGateway:
                     datetime.now(UTC) + timedelta(seconds=ttl_seconds)
                 ).isoformat()
             # If approved as persistent, create a grant.
-            if approval.persistent:
+            if approval.persistent and approval.task_id is None and approval.step_id is None:
                 grant = PermissionGrant(
                     capability_id=approval.capability_id,
                     action=approval.action,
                     resource=approval.resource,
+                    resource_is_canonical=True,
                     scope=approval.scope,
                     persistent=True,
                     expires_at=approval.expires_at,
                 )
                 self._grants[grant.grant_id] = grant
-            return approval
+            return copy.deepcopy(approval)
 
     def deny(
         self, approval_id: str, *, approver: str = "user", rationale: str = "user_denied"
@@ -209,7 +220,7 @@ class PermissionGateway:
             approval.approver = approver
             approval.decided_at = datetime.now(UTC).isoformat()
             approval.rationale = rationale
-            return approval
+            return copy.deepcopy(approval)
 
     def revoke_approval(self, approval_id: str) -> bool:
         with self._lock:
@@ -220,14 +231,15 @@ class PermissionGateway:
             return True
 
     def get_approval(self, approval_id: str) -> ApprovalRequest:
-        approval = self._approvals.get(approval_id)
-        if approval is None:
-            raise KeyError(f"approval not found: {approval_id}")
-        return approval
+        with self._lock:
+            approval = self._approvals.get(approval_id)
+            if approval is None:
+                raise KeyError(f"approval not found: {approval_id}")
+            return copy.deepcopy(approval)
 
     def list_approvals(self) -> list[ApprovalRequest]:
         with self._lock:
-            return list(self._approvals.values())
+            return [copy.deepcopy(approval) for approval in self._approvals.values()]
 
     # -- decision --------------------------------------------------------
 
@@ -247,6 +259,7 @@ class PermissionGateway:
         mode: AutonomyMode | str | None = None,
         autonomy_mode: AutonomyMode | str | None = None,
     ) -> PolicyDecision:
+        resource = canonicalize_resource(resource)
         with self._lock:
             effective_mode = mode if mode is not None else autonomy_mode
             if effective_mode is None:
@@ -272,7 +285,10 @@ class PermissionGateway:
                 return decision
 
             effective_action = action or capability_id
-            args_hash = hashlib.sha256(repr(sorted((args or {}).items())).encode()).hexdigest()
+            canonical_args = json.dumps(
+                args or {}, sort_keys=True, separators=(",", ":"), default=str
+            ).encode("utf-8")
+            args_hash = hashlib.sha256(canonical_args).hexdigest()
 
             # Only unscoped read-only capabilities are allowed by default.
             if idempotency == "read_only" and not scope:
@@ -351,6 +367,8 @@ class PermissionGateway:
                         action=effective_action,
                         scope=scope,
                         args_hash=args_hash,
+                        task_id=task_id,
+                        step_id=step_id,
                     )
                     and approval.task_id == task_id
                     and approval.step_id == step_id
@@ -377,13 +395,16 @@ class PermissionGateway:
 
             # No grant/approval.
             if approval_id is not None:
-                # Any explicitly supplied but missing, invalid, expired, or
-                # mismatched approval is a hard denial, never a fresh prompt.
+                # An explicitly supplied ID must resolve to a valid, matching
+                # approval. Missing IDs must never fall through to a weaker
+                # autonomy-mode decision.
                 decision = PolicyDecision(
                     PermissionDecision.DENY,
                     rationale_code="approval_invalid",
-                    approval_id=None if approval is None else approval.approval_id,
-                    details="approval not found, expired, unapproved, or not bound to this request",
+                    approval_id=approval_id,
+                    details=(
+                        "approval not found, expired, not approved, or request binding mismatch"
+                    ),
                 )
                 self._audit_decision(
                     capability_id,
@@ -433,7 +454,7 @@ class PermissionGateway:
 
     def audit_trail(self) -> list[AuditRecord]:
         with self._lock:
-            return list(self._audit)
+            return copy.deepcopy(self._audit)
 
     def _audit_decision(
         self,

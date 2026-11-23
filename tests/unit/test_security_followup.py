@@ -1,0 +1,726 @@
+"""Regression coverage for the security follow-up hardening pass."""
+
+from __future__ import annotations
+
+import json
+import sys
+import threading
+
+import pytest
+
+from orion.agent import ResidentAgent
+from orion.agent.models import PlannedStep
+from orion.automation import AutomationExecutor, ExecutionRequest
+from orion.capabilities.executor import CapabilityExecutor
+from orion.capabilities.models import Capability, IdempotencyClass
+from orion.capabilities.registry import CapabilityRegistry
+from orion.core.supervisor import CoreSupervisor, RestartPolicy
+from orion.experience import (
+    Experience,
+    ExperienceAction,
+    ExperienceFeedback,
+    ExperienceRecorder,
+    OutcomeClass,
+    PrivacyState,
+)
+from orion.hardware import HardwareManager
+from orion.permissions.gateway import PermissionGateway
+from orion.permissions.models import (
+    ApprovalRequest,
+    AutonomyMode,
+    PermissionDecision,
+    PermissionGrant,
+)
+from orion.tasks.manager import TaskManager
+from orion.tasks.models import (
+    IdempotencyClass as TaskIdempotency,
+)
+from orion.tasks.models import (
+    TaskState,
+    TaskStep,
+    TaskStepState,
+)
+from orion.tasks.repository import InMemoryTaskRepository, SQLiteTaskRepository
+
+
+def test_capability_defaults_to_non_idempotent_and_fails_closed() -> None:
+    invoked = []
+    capability = Capability(
+        capability_id="dangerous",
+        resource_fields=["*"],
+        handler=lambda payload, cancel_event=None: invoked.append(payload),
+    )
+    assert capability.idempotency is IdempotencyClass.NON_IDEMPOTENT
+
+    registry = CapabilityRegistry()
+    registry.register(capability)
+    result = CapabilityExecutor(registry).execute(
+        TaskStep(capability_id="dangerous", input={"operation": "delete"})
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "permission_unavailable"
+    assert invoked == []
+
+
+def test_scoped_read_only_capability_requires_matching_grant() -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="read_secret",
+            idempotency=IdempotencyClass.READ_ONLY,
+            required_scopes=["secrets.read"],
+            resource_fields=["path"],
+            handler=lambda payload, cancel_event=None: {"read": True},
+        )
+    )
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    executor = CapabilityExecutor(registry, gateway)
+    step = TaskStep(capability_id="read_secret", input={"path": "vault/item"})
+
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="read_secret",
+            action="read_secret",
+            resource="vault/item",
+            scope="",
+        )
+    )
+    denied = executor.execute(step)
+    assert denied["success"] is False
+    assert denied["error_code"] == "permission_denied"
+
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="read_secret",
+            action="read_secret",
+            resource="vault/item",
+            scope="secrets.read",
+        )
+    )
+    allowed = executor.execute(step)
+    assert allowed["success"] is True
+
+
+def test_grant_constraints_and_path_wildcards_are_segment_aware() -> None:
+    grant = PermissionGrant(
+        capability_id="write_file",
+        action="write",
+        scope="project",
+        resource="C:/Projects/Trusted/*",
+        constraints={"path": "C:/Projects/Trusted/file.txt"},
+    )
+    assert grant.matches(
+        "write_file",
+        "C:\\Projects\\Trusted\\file.txt",
+        action="write",
+        scope="project",
+        args={"path": "C:/Projects/Trusted/file.txt"},
+    )
+    assert not grant.matches(
+        "write_file",
+        "C:\\Projects\\TrustedEvil\\file.txt",
+        action="write",
+        scope="project",
+        args={"path": "C:/Projects/TrustedEvil/file.txt"},
+    )
+    assert not grant.matches(
+        "write_file",
+        "C:/Projects/Trusted/../TrustedEvil/file.txt",
+        action="write",
+        scope="project",
+        args={"path": "C:/Projects/Trusted/../TrustedEvil/file.txt"},
+    )
+    assert not grant.matches(
+        "write_file",
+        "C:/Projects/Trusted/file.txt",
+        action="write",
+        scope="project",
+        args={"path": "C:/Projects/Trusted/other.txt"},
+    )
+
+
+def test_explicit_approval_is_bound_to_task_and_step() -> None:
+    gateway = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    approval = gateway.request_approval(
+        capability_id="write_file",
+        resource="/tmp/x",
+        task_id="task-1",
+        step_id="step-1",
+        args={"path": "/tmp/x"},
+    )
+    gateway.approve(approval.approval_id)
+
+    decision = gateway.decide(
+        "write_file",
+        "/tmp/x",
+        task_id="task-2",
+        step_id="step-1",
+        args={"path": "/tmp/x"},
+        approval_id=approval.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
+
+
+def test_explicit_approval_empty_resource_is_not_a_wildcard() -> None:
+    gateway = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    approval = gateway.request_approval(capability_id="write_file", resource="")
+    gateway.approve(approval.approval_id)
+
+    decision = gateway.decide(
+        "write_file",
+        "/outside/target",
+        approval_id=approval.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
+
+
+def test_unknown_explicit_approval_id_is_denied() -> None:
+    gateway = PermissionGateway(mode=AutonomyMode.SUPERVISED)
+    decision = gateway.decide(
+        "write_file",
+        "/tmp/x",
+        approval_id="not-a-real-approval",
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
+
+
+def test_invalid_planner_idempotency_is_rejected() -> None:
+    class InvalidPlanner:
+        def plan(self, objective, available_capabilities):
+            return [PlannedStep(capability_id="write_file", idempotency="pretend_read_only")]
+
+    agent = ResidentAgent(
+        task_manager=TaskManager(repository=InMemoryTaskRepository()),
+        planner=InvalidPlanner(),
+    )
+    objective = agent.submit_objective("perform a file operation")
+    with pytest.raises(ValueError, match="invalid idempotency"):
+        agent.create_task_from_objective(objective)
+
+
+def test_task_step_default_is_non_idempotent() -> None:
+    assert TaskStep().idempotency is TaskIdempotency.NON_IDEMPOTENT
+
+
+def test_durable_request_deduplication_survives_restart(tmp_path) -> None:
+    database = tmp_path / "orion.db"
+    first = TaskManager(repository=SQLiteTaskRepository(database))
+    task = first.create_task(first.create_objective("first request"), request_id="request-1")
+
+    restarted = TaskManager(repository=SQLiteTaskRepository(database))
+    duplicate = restarted.create_task(
+        restarted.create_objective("duplicate request"), request_id="request-1"
+    )
+    assert duplicate.task_id == task.task_id
+    assert len(restarted.list_tasks()) == 1
+
+
+def test_unsafe_running_task_is_quarantined_and_not_resumed() -> None:
+    manager = TaskManager(repository=InMemoryTaskRepository())
+    step = TaskStep(
+        capability_id="charge_card",
+        idempotency=TaskIdempotency.NON_IDEMPOTENT,
+    )
+    task = manager.create_task(manager.create_objective("charge"), steps=[step])
+    manager.update_task(task.task_id, state=TaskState.RUNNING)
+    manager.update_step(task.task_id, step.step_id, state=TaskStepState.RUNNING)
+
+    recovered = manager.recover_task(task.task_id)
+    assert recovered.recovery_safe is False
+    assert recovered.state is TaskState.PAUSED
+    assert recovered.failure_code == "unsafe_recovery_requires_review"
+
+    class MustNotExecute:
+        def execute(self, *args, **kwargs):
+            raise AssertionError("quarantined task must not execute")
+
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="charge_card",
+            idempotency=IdempotencyClass.NON_IDEMPOTENT,
+            resource_fields=["*"],
+        )
+    )
+    agent = ResidentAgent(task_manager=manager, registry=registry, executor=MustNotExecute())
+    assert agent.run_task(task.task_id).state is TaskState.PAUSED
+
+
+def test_supervisor_terminates_running_child_on_shutdown() -> None:
+    started = threading.Event()
+    stop = threading.Event()
+    result = []
+
+    class Child:
+        terminated = False
+
+        def poll(self):
+            return -15 if self.terminated else None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return self.poll()
+
+    child = Child()
+
+    def spawn():
+        started.set()
+        return child
+
+    supervisor = CoreSupervisor(RestartPolicy(max_restarts=2, initial_delay_s=0, max_delay_s=0))
+    thread = threading.Thread(
+        target=lambda: result.append(supervisor.supervise(spawn, stop_event=stop))
+    )
+    thread.start()
+    assert started.wait(1)
+    stop.set()
+    thread.join(2)
+
+    assert not thread.is_alive()
+    assert child.terminated is True
+    assert result == [0]
+
+
+def test_feedback_and_nested_action_data_are_redacted() -> None:
+    recorder = ExperienceRecorder()
+    experience = recorder.capture_experience(
+        objective_id="objective",
+        task_id="task",
+        outcome=OutcomeClass.SUCCESS,
+        actions=[
+            ExperienceAction(
+                capability_id="read_secret",
+                input={"nested": {"token": "action-secret"}},
+            )
+        ],
+        metadata={"nested": {"token": "metadata-secret"}},
+    )
+    recorder.add_feedback(experience.experience_id, "feedback-secret")
+    recorder.redact(
+        experience.experience_id,
+        ["metadata.token", "actions.input.token", "feedback.content"],
+    )
+
+    stored = recorder.get(experience.experience_id)
+    assert stored is not None
+    assert stored.metadata["nested"]["token"] == "[REDACTED]"
+    assert stored.actions[0].input["nested"]["token"] == "[REDACTED]"
+    assert stored.feedback[0].content == "[REDACTED]"
+    recorder.review_privacy(experience.experience_id, PrivacyState.APPROVED)
+    recorder.add_feedback(experience.experience_id, "later-feedback-secret")
+    assert recorder.get(experience.experience_id).feedback[-1].content == "[REDACTED]"
+    exported = json.dumps(recorder.export(), sort_keys=True)
+    for secret in ("action-secret", "metadata-secret", "feedback-secret", "later-feedback-secret"):
+        assert secret not in exported
+
+
+def test_hardware_inventory_reports_multiple_gpus_and_windows_os(monkeypatch) -> None:
+    def query(self, script, timeout=15.0):
+        if "Win32_Processor" in script:
+            return "Test CPU"
+        if "TotalPhysicalMemory" in script:
+            return str(32 * 1024**3)
+        if "Win32_OperatingSystem" in script:
+            return json.dumps(
+                {"Caption": "Microsoft Windows 11 Pro", "Version": "10.0", "BuildNumber": "22631"}
+            )
+        if "Win32_VideoController" in script:
+            return json.dumps(
+                [
+                    {
+                        "Name": "NVIDIA GeForce RTX 4090",
+                        "DriverVersion": "555.1",
+                        "PNPDeviceID": "GPU-0",
+                        "AdapterRAM": 4 * 1024**3,
+                    },
+                    {
+                        "Name": "Intel UHD Graphics",
+                        "DriverVersion": "31.0",
+                        "PNPDeviceID": "GPU-1",
+                        "AdapterRAM": 512 * 1024**2,
+                    },
+                ]
+            )
+        if "nvidia-smi" in script:
+            return "NVIDIA GeForce RTX 4090, 24564, 555.1, GPU-0"
+        return ""
+
+    monkeypatch.setattr(HardwareManager, "_run_query", query)
+    inventory = HardwareManager().collect_inventory()
+    assert inventory.os_version == "Microsoft Windows 11 Pro 10.0 22631"
+    assert inventory.ram_mb == 32768
+    assert len(inventory.gpus) == 2
+    assert inventory.gpus[0].memory_mb == 24564
+    assert inventory.gpus[0].driver_version == "555.1"
+    assert inventory.gpus[1].name == "Intel UHD Graphics"
+
+
+def test_evaluation_cannot_accept_caller_supplied_pass_result() -> None:
+    from orion.learning import LearningManager
+
+    metrics = {
+        "accuracy": 0.99,
+        "held_out": True,
+        "eval_dataset_checksum": "test-checksum",
+        "eval_examples": 10,
+    }
+    with pytest.raises(ValueError, match="evaluator output"):
+        LearningManager().evaluate_candidate("candidate", metrics=metrics, passed=True)
+
+
+def test_empty_grant_selectors_do_not_mean_global_access() -> None:
+    grants = [
+        PermissionGrant(action="delete", scope="global", resource="*"),
+        PermissionGrant(capability_id="write_file", scope="global", resource="*"),
+        PermissionGrant(capability_id="write_file", action="delete", resource="*"),
+    ]
+    for grant in grants:
+        assert not grant.matches(
+            "write_file",
+            "/etc/passwd",
+            action="delete",
+            scope="global",
+            args={"path": "/etc/passwd"},
+        )
+
+
+def test_redacted_experience_export_masks_legacy_nested_feedback() -> None:
+    experience = Experience(
+        privacy_state=PrivacyState.REDACTED,
+        redacted_fields=["feedback.content", "actions.input.token", "metadata.token"],
+        actions=[
+            ExperienceAction(
+                capability_id="read_secret",
+                input={"nested": {"token": "legacy-action-secret"}},
+            )
+        ],
+        feedback=[ExperienceFeedback(content="legacy-feedback-secret")],
+        metadata={"nested": {"token": "legacy-metadata-secret"}},
+    )
+    exported = json.dumps(experience.as_dict(redact=True), sort_keys=True)
+    assert "legacy-action-secret" not in exported
+    assert "legacy-feedback-secret" not in exported
+    assert "legacy-metadata-secret" not in exported
+    assert experience.feedback[0].content == "legacy-feedback-secret"
+    assert experience.metadata["nested"]["token"] == "legacy-metadata-secret"
+
+
+def test_returned_permission_objects_cannot_mutate_gateway_policy() -> None:
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    grant = gateway.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            action="write_file",
+            resource="/safe",
+            scope="project",
+        )
+    )
+    grant.resource = "*"
+    grant.capability_id = "*"
+    decision = gateway.decide(
+        "write_file",
+        "/outside",
+        scope="project",
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
+
+    approval = gateway.request_approval(
+        capability_id="delete_file",
+        resource="/safe",
+        task_id="task-1",
+        step_id="step-1",
+    )
+    approval.resource = "/outside"
+    approved = gateway.approve(approval.approval_id)
+    approved.resource = "/outside"
+    decision = gateway.decide(
+        "delete_file",
+        "/outside",
+        task_id="task-1",
+        step_id="step-1",
+        approval_id=approval.approval_id,
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
+
+
+def test_capability_registry_does_not_expose_mutable_security_metadata() -> None:
+    capability = Capability(capability_id="write_file", resource_fields=["path"])
+    registry = CapabilityRegistry()
+    registry.register(capability)
+
+    capability.idempotency = IdempotencyClass.READ_ONLY
+    capability.resource_fields = ["*"]
+    returned = registry.get("write_file")
+    returned.idempotency = IdempotencyClass.READ_ONLY
+    returned.resource_fields = ["*"]
+    stored = registry.get("write_file")
+    assert stored.idempotency is IdempotencyClass.NON_IDEMPOTENT
+    assert stored.resource_fields == ["path"]
+
+
+def test_in_memory_task_repository_does_not_expose_mutable_records() -> None:
+    manager = TaskManager(repository=InMemoryTaskRepository())
+    step = TaskStep(
+        capability_id="write_file",
+        idempotency=TaskIdempotency.NON_IDEMPOTENT,
+    )
+    task = manager.create_task(manager.create_objective("write"), steps=[step])
+    task.steps[0].idempotency = TaskIdempotency.READ_ONLY
+    loaded = manager.get_task(task.task_id)
+    assert loaded.steps[0].idempotency is TaskIdempotency.NON_IDEMPOTENT
+    loaded.steps[0].idempotency = TaskIdempotency.READ_ONLY
+    assert manager.get_task(task.task_id).steps[0].idempotency is TaskIdempotency.NON_IDEMPOTENT
+
+
+def test_returned_experience_snapshot_cannot_remove_privacy_controls() -> None:
+    recorder = ExperienceRecorder()
+    returned = recorder.capture_experience(
+        objective_id="objective",
+        task_id="task",
+        outcome=OutcomeClass.SUCCESS,
+        metadata={"request": "private-request"},
+    )
+    recorder.redact(returned.experience_id, ["request"])
+    returned.redacted_fields.clear()
+    returned.privacy_state = PrivacyState.APPROVED
+    returned.metadata["request"] = "mutated-secret"
+
+    stored = recorder.get(returned.experience_id)
+    assert stored.privacy_state is PrivacyState.REDACTED
+    assert stored.redacted_fields == ["request"]
+    assert stored.metadata["request"] == "[REDACTED]"
+
+
+def test_capability_executor_checks_every_resource_argument() -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="write_files",
+            idempotency=IdempotencyClass.NON_IDEMPOTENT,
+            required_scopes=["files.write"],
+            resource_fields=["source", "destination"],
+            handler=lambda payload, cancel_event=None: {"written": True},
+        )
+    )
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="write_files",
+            action="write_files",
+            resource="C:/Work/source.txt",
+            scope="files.write",
+        )
+    )
+    executor = CapabilityExecutor(registry, gateway)
+    step = TaskStep(
+        capability_id="write_files",
+        input={
+            "source": "C:/Work/source.txt",
+            "destination": "C:/Outside/destination.txt",
+        },
+    )
+    denied = executor.execute(step)
+    assert denied["success"] is False
+    assert denied["error_code"] == "permission_denied"
+
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="write_files",
+            action="write_files",
+            resource="C:/Outside/destination.txt",
+            scope="files.write",
+        )
+    )
+    assert executor.execute(step)["success"] is True
+
+
+def test_medium_risk_read_only_capability_requires_gateway() -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="inspect_private_data",
+            idempotency=IdempotencyClass.READ_ONLY,
+            risk="medium",
+            handler=lambda payload, cancel_event=None: {"read": True},
+        )
+    )
+    result = CapabilityExecutor(registry).execute(TaskStep(capability_id="inspect_private_data"))
+    assert result["success"] is False
+    assert result["error_code"] == "permission_unavailable"
+
+
+def test_low_risk_read_only_resource_access_requires_gateway() -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="read_file",
+            idempotency=IdempotencyClass.READ_ONLY,
+            risk="low",
+            resource_fields=["path"],
+            handler=lambda payload, cancel_event=None: {"read": True},
+        )
+    )
+    result = CapabilityExecutor(registry).execute(
+        TaskStep(capability_id="read_file", input={"path": "C:/Private/secret.txt"})
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "permission_unavailable"
+
+
+def test_malformed_permission_expiry_and_constraints_fail_closed() -> None:
+    grant = PermissionGrant(
+        capability_id="write_file",
+        action="write_file",
+        resource="/safe",
+        constraints=None,
+        expires_at="not-a-timestamp",
+    )
+    assert grant.is_active() is False
+    assert (
+        grant.matches(
+            "write_file",
+            "/safe",
+            action="write_file",
+            args={},
+        )
+        is False
+    )
+
+    approval = ApprovalRequest(expires_at="not-a-timestamp")
+    assert approval.is_expired() is True
+
+
+def test_resource_grant_does_not_follow_symlink_outside_root(tmp_path) -> None:
+    trusted = tmp_path / "trusted"
+    outside = tmp_path / "outside"
+    trusted.mkdir()
+    outside.mkdir()
+    link = trusted / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlink creation is unavailable")
+
+    grant = PermissionGrant(
+        capability_id="write_file",
+        action="write",
+        resource=f"{trusted}/*",
+        scope="project",
+    )
+    escaped = str(link / "secret.txt")
+    assert not grant.matches(
+        "write_file",
+        escaped,
+        action="write",
+        scope="project",
+    )
+
+
+def test_supervisor_does_not_spawn_when_shutdown_is_already_requested() -> None:
+    stop = threading.Event()
+    stop.set()
+    spawned = []
+
+    supervisor = CoreSupervisor(RestartPolicy(max_restarts=2, initial_delay_s=0, max_delay_s=0))
+    result = supervisor.supervise(lambda: spawned.append(object()), stop_event=stop)
+    assert result == 0
+    assert spawned == []
+
+
+def test_grant_cannot_be_redirected_by_symlink_created_after_approval(tmp_path) -> None:
+    trusted = tmp_path / "trusted"
+    outside = tmp_path / "outside"
+    future_root = trusted / "future"
+    trusted.mkdir()
+    outside.mkdir()
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="write_file",
+            action="write",
+            resource=f"{future_root}/*",
+            scope="project",
+        )
+    )
+    try:
+        future_root.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlink creation is unavailable")
+
+    decision = gateway.decide(
+        "write_file",
+        str(future_root / "secret.txt"),
+        action="write",
+        scope="project",
+        idempotency="non_idempotent",
+    )
+    assert decision.decision is PermissionDecision.DENY
+
+
+def test_automation_allowlists_cannot_be_mutated_after_construction(tmp_path) -> None:
+    executor = AutomationExecutor(
+        approved_roots=[str(tmp_path)],
+        allowed_executables={"python.exe"},
+    )
+    with pytest.raises(AttributeError):
+        executor.allowed_executables.add("cmd.exe")
+    with pytest.raises(AttributeError):
+        executor.approved_roots = ("C:/",)
+    with pytest.raises(AttributeError):
+        executor.permission_gateway = PermissionGateway()
+
+
+def test_automation_rejects_environment_path_hijacking(tmp_path) -> None:
+    # Their tip resolves allowlist entries and looks up by request executable,
+    # so the allowlist must contain the request executable (sys.executable).
+    executor = AutomationExecutor(
+        approved_roots=[str(tmp_path)],
+        allowed_executables={sys.executable},
+    )
+    request = ExecutionRequest(
+        executable=sys.executable,
+        working_dir=str(tmp_path),
+        env={"PATH": "C:/attacker"},
+    )
+    with pytest.raises(ValueError, match="environment cannot override"):
+        executor.validate_request(request)
+
+
+def test_workspace_grant_cannot_authorize_arbitrary_process_targets(tmp_path) -> None:
+    gateway = PermissionGateway(mode=AutonomyMode.INDEPENDENT)
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="automation.execute",
+            action="automation.execute",
+            resource=str(tmp_path),
+        )
+    )
+    executor = AutomationExecutor(
+        approved_roots=[str(tmp_path)],
+        allowed_executables={sys.executable},
+        permission_gateway=gateway,
+    )
+    request = ExecutionRequest(
+        executable=sys.executable,
+        args=["-c", "print('approved')"],
+        working_dir=str(tmp_path),
+        idempotency=IdempotencyClass.NON_IDEMPOTENT,
+    )
+    with pytest.raises(PermissionError):
+        executor.execute(request)
+
+    gateway.add_grant(
+        PermissionGrant(
+            capability_id="automation.execute",
+            action="automation.execute",
+            resource="*",
+        )
+    )
+    assert executor.execute(request).exit_code == 0
