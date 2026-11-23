@@ -41,7 +41,10 @@ log = logging.getLogger(__name__)
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="orion-workstation",
-        description="Orion Workstation: local-first Operations Centre (Phase 1 shell).",
+        description=(
+            "Orion Workstation: local-first Operations Centre with the resident agent "
+            "connected through Orion Core."
+        ),
     )
     parser.add_argument(
         "--data-dir",

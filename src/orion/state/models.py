@@ -41,13 +41,22 @@ class StatusKind(StrEnum):
 
 
 class TaskState(StrEnum):
-    """Task states that exist in Phase 1.
+    """Task states surfaced by the presentation layer.
 
-    Only ``SIMULATED`` is defined. Real lifecycle states (queued, running,
-    completed, failed) arrive with the task engine in Phase 4; inventing them now
-    would let the shell display outcomes that nothing can produce.
+    The real lifecycle states (created, planned, running, completed, failed,
+    partial, paused, cancelled) arrived with the durable task engine in Phase 4;
+    ``SIMULATED`` is retained for older mock snapshots so nothing relies on an
+    invented vocabulary.
     """
 
+    CREATED = "created"
+    PLANNED = "planned"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PARTIAL = "partial"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
     SIMULATED = "simulated"
 
 

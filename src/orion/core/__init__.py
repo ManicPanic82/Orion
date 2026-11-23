@@ -1,9 +1,10 @@
 """Orion Core: the UI-independent background process.
 
-Phase 2 introduces the Core as a process of its own. The UI (Phase 1 shell) is a
-client of the state seam introduced in Phase 1; this package holds the Core-side
-contracts and the first slice of implementation: lifecycle, health, events, API,
-supervisor, and the service facade.
+Phase 2 introduced the Core as a process of its own. This package holds the
+Core-side contracts and implementation: lifecycle, health, events, API,
+supervisor, the service facade, and the composed ``CoreServices`` (resident
+agent, tasks, permissions, model manager, experience recorder, learning
+manager) that the Workstation embeds.
 """
 
 from orion.core.api import (

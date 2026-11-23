@@ -35,11 +35,11 @@ from PySide6.QtWidgets import (
 from orion import APP_NAME, PHASE_LABEL, __version__
 from orion.config.settings import Settings, SettingsError, Severity
 from orion.config.store import SettingsStore
-from orion.mock.state_provider import MockStateProvider
 from orion.navigation import DEFAULT_PAGE_ID, DESTINATIONS
 from orion.startup import StartupController
 from orion.state.provider import StateProvider
 from orion.ui.console_panel import ConsolePanel
+from orion.ui.core_state_provider import CoreStateProvider
 from orion.ui.pages.command_centre import CommandCentrePage
 from orion.ui.pages.planned_page import PlannedPage
 from orion.ui.pages.settings_page import SettingsPage
@@ -74,7 +74,7 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._store = store
         self._settings = settings
-        self._provider: StateProvider = provider or MockStateProvider()
+        self._provider: StateProvider = provider or CoreStateProvider()
         self._startup = startup
         self._startup_prompt = startup_prompt
         self._console = ConsoleViewModel()

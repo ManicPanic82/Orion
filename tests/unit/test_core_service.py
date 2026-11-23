@@ -29,7 +29,10 @@ def test_core_health_snapshot_reflects_the_running_state() -> None:
 
     assert snapshot.state is CoreLifecycleState.READY
     assert snapshot.ok is True
-    assert snapshot.checks[0].name == "process"
+    names = {check.name for check in snapshot.checks}
+    assert "process" in names
+    # Service checks are registered at start; sorted order starts with "agent".
+    assert snapshot.checks[0].name == "agent"
 
 
 def test_core_stop_returns_to_stopped_state() -> None:

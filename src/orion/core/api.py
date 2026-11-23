@@ -1,33 +1,55 @@
 """Loopback-only HTTP API for Orion Core.
 
-The API is intentionally small and strict in the first slice: a single
-``GET /health`` endpoint with bearer-token authentication, an allowlist of
-paths, and a request-size ceiling.
-
-It binds to loopback only. The server is constructed with ``127.0.0.1`` and is
-never configured to bind elsewhere in this phase.
+The API serves the health endpoint and the objective pipeline: submit
+objectives through the resident agent and run or cancel tasks. It binds to
+loopback only and is authenticated with a bearer token.
 """
 
 from __future__ import annotations
 
 import hmac
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-__all__ = ["ALLOWED_PATHS", "HEALTH_PATH", "HOST", "MAX_BODY_BYTES", "ApiError", "OrionApiServer"]
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from orion.core.service import OrionCore
+
+__all__ = [
+    "ALLOWED_PATHS",
+    "HEALTH_PATH",
+    "HOST",
+    "MAX_BODY_BYTES",
+    "OBJECTIVES_PATH",
+    "ApiError",
+    "OrionApiServer",
+]
 
 
 HOST = "127.0.0.1"
 MAX_BODY_BYTES = 64 * 1024
-ALLOWED_PATHS: frozenset[str] = frozenset({"/health"})
 HEALTH_PATH = "/health"
+OBJECTIVES_PATH = "/objectives"
+ALLOWED_PATHS: frozenset[str] = frozenset(
+    {
+        HEALTH_PATH,
+        OBJECTIVES_PATH,
+        "/objectives/{id}/tasks",
+        "/objectives/{id}/run",
+        "/objectives/{id}/cancel",
+    }
+)
+
+_OBJECTIVE_TASKS_RE = re.compile(r"/objectives/([^/]+)/tasks")
+_OBJECTIVE_RUN_RE = re.compile(r"/objectives/([^/]+)/run")
+_OBJECTIVE_CANCEL_RE = re.compile(r"/objectives/([^/]+)/cancel")
 
 
 class ApiError(Exception):
-    """An error that maps onto an HTTP status code."""
+    """Error that maps onto an HTTP status code."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -41,9 +63,10 @@ class OrionApiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address: tuple[str, int], *, token: str) -> None:
+    def __init__(self, address: tuple[str, int], *, token: str, core: OrionCore | None = None):
         super().__init__(address, _HealthHandler)
         self._token = token
+        self._core = core
         self._health: dict[str, Any] = {"status": "unknown", "checks": []}
         self._thread: threading.Thread | None = None
         self._listening = False
@@ -51,6 +74,10 @@ class OrionApiServer(ThreadingHTTPServer):
     @property
     def token(self) -> str:
         return self._token
+
+    @property
+    def core(self) -> OrionCore | None:
+        return self._core
 
     @property
     def host(self) -> str:
@@ -87,30 +114,69 @@ class OrionApiServer(ThreadingHTTPServer):
 class _HealthHandler(BaseHTTPRequestHandler):
     """Request handler enforcing Orion API rules."""
 
-    server: OrionApiServer  # type: ignore[assignment]
+    server: OrionApiServer
 
     def do_GET(self) -> None:  # noqa: N802 - http.server convention
-        if urlsplit(self.path).path not in ALLOWED_PATHS:
-            self._send_json(404, {"error": "not_found"})
-            return
-
+        path = urlsplit(self.path).path
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
             return
-
         if self._content_length() > MAX_BODY_BYTES:
             self._send_json(413, {"error": "payload_too_large"})
             return
-
-        body = json.dumps(self.server._health).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        if path == HEALTH_PATH:
+            self._send_json(200, self.server._health)
+            return
+        match = _OBJECTIVE_TASKS_RE.fullmatch(path)
+        if match is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+        core = self.server.core
+        if core is None:
+            self._send_json(503, {"error": "core_not_available"})
+            return
+        self._send_json(200, {"tasks": core.objective_tasks_payload(match.group(1))})
 
     def do_POST(self) -> None:  # noqa: N802 - http.server convention
-        self._send_json(405, {"error": "method_not_allowed"})
+        path = urlsplit(self.path).path
+        allowed = (
+            path == OBJECTIVES_PATH
+            or _OBJECTIVE_RUN_RE.fullmatch(path) is not None
+            or (_OBJECTIVE_CANCEL_RE.fullmatch(path) is not None)
+        )
+        if not allowed:
+            self._send_json(404, {"error": "not_found"})
+            return
+        if not self._authorized():
+            self._send_json(401, {"error": "unauthorized"})
+            return
+        if self._content_length() > MAX_BODY_BYTES:
+            self._send_json(413, {"error": "payload_too_large"})
+            return
+        core = self.server.core
+        if core is None:
+            self._send_json(503, {"error": "core_not_available"})
+            return
+        body = self._read_json_body()
+        if path == OBJECTIVES_PATH:
+            request = body.get("request")
+            if not isinstance(request, str) or not request.strip():
+                self._send_json(400, {"error": "request must be a non-empty string"})
+                return
+            task = core.submit_objective(
+                request, request_id=body.get("request_id") if isinstance(body, dict) else None
+            )
+            self._send_json(200, core.task_payload(task))
+            return
+        match = _OBJECTIVE_RUN_RE.fullmatch(path) or _OBJECTIVE_CANCEL_RE.fullmatch(path)
+        assert match is not None
+        action = "run" if _OBJECTIVE_RUN_RE.fullmatch(path) else "cancel"
+        target = body.get("task_id") or match.group(1)
+        if not isinstance(target, str) or not target:
+            self._send_json(400, {"error": "task_id must be a non-empty string"})
+            return
+        task = core.run_task(target) if action == "run" else core.cancel_task(target)
+        self._send_json(200, core.task_payload(task))
 
     def do_PUT(self) -> None:  # noqa: N802 - http.server convention
         self._send_json(405, {"error": "method_not_allowed"})
@@ -136,6 +202,16 @@ class _HealthHandler(BaseHTTPRequestHandler):
         expected = f"Bearer {self.server.token}"
         supplied = self.headers.get("Authorization", "")
         return hmac.compare_digest(expected, supplied)
+
+    def _read_json_body(self) -> dict[str, Any]:
+        try:
+            raw = self.rfile.read(self._content_length()) if self._content_length() else b""
+            if not raw:
+                return {}
+            parsed = json.loads(raw.decode("utf-8"))
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
 
     def _send_json(self, status: int, payload: dict[str, object]) -> None:
         body = json.dumps(payload).encode("utf-8")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import threading
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from orion.agent.models import VerificationResult
 from orion.agent.planner import MockPlanner, Planner
 from orion.capabilities.executor import CapabilityExecutor
 from orion.capabilities.registry import CapabilityRegistry
+from orion.experience.manager import ExperienceRecorder
 from orion.tasks.manager import TaskManager
 from orion.tasks.models import IdempotencyClass, Objective, Task, TaskState, TaskStep, TaskStepState
 
@@ -24,13 +26,23 @@ class ResidentAgent:
         planner: Planner | None = None,
         executor: CapabilityExecutor | None = None,
         verifier: Callable[[Task, list[Any]], VerificationResult] | None = None,
+        experience_recorder: ExperienceRecorder | None = None,
     ) -> None:
         self.task_manager = task_manager or TaskManager()
         self.registry = registry or CapabilityRegistry()
         self.planner = planner or MockPlanner()
         self.executor = executor or CapabilityExecutor(self.registry)
         self.verifier = verifier or self._default_verifier
+        self.experience_recorder = experience_recorder
         self._lock = threading.RLock()
+
+    def _capture_experience(self, task: Task, observations: list[Any]) -> None:
+        """Record a task episode for the learning pipeline, if capture is wired."""
+        if self.experience_recorder is None:
+            return
+        # Experience capture is best-effort; never break task execution.
+        with contextlib.suppress(Exception):
+            self.experience_recorder.capture_from_task(task, observations)
 
     def submit_objective(
         self, request: str, *, request_id: str | None = None, metadata: dict[str, Any] | None = None
@@ -176,12 +188,14 @@ class ResidentAgent:
                     task_id, step.step_id, error=step.error, outcome=step.outcome
                 )
                 # Stop on failure.
-                return self.task_manager.update_task(
+                task = self.task_manager.update_task(
                     task_id,
                     state=TaskState.FAILED,
                     failure_code=result.get("error_code", "step_failed"),
                     finished_at=datetime.datetime.now(datetime.UTC).isoformat(),
                 )
+                self._capture_experience(task, observations)
+                return task
 
         task = self.task_manager.get_task(task_id)
         # Verification.
@@ -200,6 +214,7 @@ class ResidentAgent:
             result_summary=verification.details,
             finished_at=datetime.datetime.now(datetime.UTC).isoformat(),
         )
+        self._capture_experience(task, observations)
         self.task_manager.events.publish(
             "task.finished", {"task_id": task_id, "state": task.state.value}
         )

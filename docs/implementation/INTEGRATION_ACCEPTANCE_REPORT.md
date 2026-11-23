@@ -7,6 +7,10 @@ Orion — status of the security/integration repair cycle.
   - `origin/security/follow-up-hardening` @ `a20bde6`
   - `origin/security/follow-up-hardening-clean` @ `9efb55b` (based on my `9b68fc4`)
 - Full suite after merge: **329 passed** (292 unit + 37 Qt); ruff: **all checks passed**.
+- Integration pass (this report's second half): new suites `test_core_integration.py`
+  (E2E: Core start → health → objective through the gateway → tasks/experiences durable
+  across restart) and `test_core_state_provider.py` (3 provider tests); full suite:
+  **333 passed**; ruff: **all checks passed**; `smoke_launch.py --offscreen`: exit 0.
 
 ## Verdict
 
@@ -139,13 +143,14 @@ branch semantics vs their clean tip — newest wins):
 
 | Component | State | Notes |
 |---|---|---|
-| **Workstation UI ↔ Core** | **Not wired** | `MainWindow` uses `MockStateProvider` by default (`src/orion/ui/main_window.py`: `provider or MockStateProvider()`); `CommandCentrePage` subtitle still says "Phase 1 shell... every value below is simulated" (`src/orion/ui/pages/command_centre.py`). |
-| **Resident Agent ↔ Task Engine** | Partial | Interface mismatch fixed (shared gateway contract); Agent→`TaskManager` writes now go through manager APIs; durable `TaskManager` default. |
-| **Model Manager / real model host** | Not wired | Mock host only (Phase 3 admission). |
-| **Memory** | Wired path present | SQLite `MemoryStore` durable; UI memory page separate Phase 6. |
+| **Workstation UI ↔ Core** | **CONNECTED (embedded)** | `MainWindow` defaults to `CoreStateProvider` (real, `is_mock=False`); `CommandCentrePage` subtitle now says "Connected"; the Composer's Submit flows through `provider.submit_command` → `OrionCore.submit_objective`. The standalone `orion-core` process remains Phase 2. |
+| **Resident Agent ↔ Task Engine** | **CONNECTED** | `CoreServices.agent` = `ResidentAgent(task_manager, executor, experience_recorder)`; agent writes go through manager APIs (`update_task`/`update_step`); `run_task`/`cancel_task` available on `OrionCore`. |
+| **Objective pipeline** | **WIRED (E2E-tested)** | POST `/objectives` → `submit_and_create_task` → `run_task` → gateway-gated executor → durable task/experience. See `tests/unit/test_core_integration.py`. |
+| **Model Manager / real model host** | Wired path, mock host | Mock profile registered + loaded at `OrionCore.start()`; health check `"model"` reports OK; real backends land in Phase 3/15. |
+| **Memory** | Wired | `CoreServices.memory_manager` (SQLite `MemoryStore`). |
 | **Tasks** | Wired (durable) | `SQLiteTaskRepository` default; `TaskManager` durable. |
-| **Experience** | Partial | Durable via `SQLiteExperienceStore` (opt-in `store` param); recorder default remains in-memory. |
-| **Learning / Evolution** | Partial | Pipeline complete; promotion requires evaluation (repaired); no end-to-end trigger wiring yet. |
+| **Experience** | Wired + durable | `SQLiteExperienceStore`; agent captures episodes via `_capture_experience` (E2E-verified). |
+| **Learning / Evolution** | Wired | `CoreServices.learning_manager`; promotion requires evaluation (repaired). |
 | **Voice** | Mock only | Phase 9 mock STT/TTS by design. |
 | **Automation** | Hardened, not wired | Executor semantics now fail-closed; no production caller changes. |
 | **Project Intelligence** | Hardened | Root validation + deterministic test command request. |
@@ -153,7 +158,7 @@ branch semantics vs their clean tip — newest wins):
 | **Delegation** | Mock only | Phase 12 adapter by design. |
 | **Workflows** | Early | Phase 13 primitives. |
 | **Hardware** | Partial | Inventory now real (PowerShell); benchmarks/telemetry still recorded objects. |
-| **Model Profiles (Phase 3)** | Partial | Mock host by design. |
+| **Model Profiles (Phase 3)** | Wired, mock host | Mock host by design until Phase 3/15. |
 | **Phase 4–5, 9, 12, 14 UI wiring** | Outstanding | Higher-level flows not integrated into the Workstation. |
 
 ## End-to-end acceptance target (user's milestone)
@@ -168,13 +173,49 @@ to be encoded as end-to-end tests (startup + resident lifetime, permission
 flow through the gateway with approvals, task execution through the durable
 task engine, memory + experience capture, learning gate, shutdown/recovery).
 
+## Integration pass — user milestone check
+
+Their milestone: *"Orion starts with Windows, remains resident, loads its
+model, accepts an objective, plans and executes a task through its permission
+gateway, remembers the experience, learns from approved examples, and can
+safely continue working without the user having to manage individual
+subsystems."*
+
+Status:
+
+- **Starts with Windows:** `python -m orion` launches the Workstation; the
+  Provider reports `is_mock=False`; UI badges no longer show MOCK for the
+  agent/model/tasks. Verified by `scripts/smoke_launch.py --offscreen` (exit 0).
+- **Remains resident:** `OrionCore.start()` registers agent/tasks/permissions/
+  experience/model health checks; Core blocks on `stop_event.wait()`
+  indefinitely (Finding 4 fix).
+- **Loads its model:** `CoreServices` registers a mock Model Profile and loads
+  it via `MockModelHost` at `OrionCore.start()` (Phase 3 placeholder); health
+  check `"model"` is OK; `status.kind == OPERATIONAL`.
+- **Accepts an objective:** Composer → `CoreStateProvider.submit_command` →
+  `OrionCore.submit_objective` → `agent.submit_and_create_task`.
+- **Plans and executes through the permission gateway:** `CapabilityExecutor`
+  gates non-read-only work through `PermissionGateway` (shared contract,
+  approval binding + grant enforcement from this pass). E2E-tested: echo
+  objective → completed task, `permission_denied` for an unapproved write.
+- **Remembers the experience:** `agent.run_task` → `ExperienceRecorder`
+  (durable) — verified across restart in `test_core_integration.py`.
+- **Learns from approved examples:** `LearningManager` wired; promotion requires
+  a candidate-bound, passed evaluation (this pass).
+- **Safely continues:** permission denial does not corrupt task state; the
+  command composer returns the denial message.
+
+Evidence: `tests/unit/test_core_integration.py` — startup, health, objective
+flow, permission denial, experience capture, restart durability;
+`tests/unit/test_core_state_provider.py` — provider real-state surface.
+
 ## Repair evidence (commands and results)
 
 ```powershell
 # Unit tests after merges + repairs:
-.\.venv\Scripts\python.exe -m pytest          # 329 passed (292 unit + 37 Qt)
+.\.venv\Scripts\python.exe -m pytest          # 333 passed (296 unit + 37 Qt)
 .\.venv\Scripts\python.exe -m ruff check .    # All checks passed
-.\.venv\Scripts\python.exe scripts\smoke_launch.py   # executed; see validation log below
+.\.venv\Scripts\python.exe scripts\smoke_launch.py   # executed; exit 0
 ```
 
 Git facts:

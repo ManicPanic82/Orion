@@ -83,8 +83,8 @@ class CommandCentrePage(QWidget):
         outer.addLayout(heading)
 
         subtitle = QLabel(
-            "Phase 1 shell. No resident agent, model runtime, or task engine is "
-            "connected — every value below is simulated.",
+            "Orion Workstation with the resident agent connected: objectives "
+            "run through the permission gateway and the durable task engine.",
             self,
         )
         subtitle.setProperty("role", "subtitle")
